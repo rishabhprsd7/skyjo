@@ -78,6 +78,23 @@ p{line-height:1.6}
 .bar{height:3px;border-radius:3px;background:var(--rule);margin-top:12px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--brass);transition:margin-left .35s ease}
 
+.turnbar{display:flex;align-items:center;gap:12px;margin-top:14px;padding:12px 14px;
+  border-radius:12px;background:var(--panel);border:1px solid var(--rule)}
+.turnbar.mine{background:var(--brass);border-color:var(--brass);color:#22180A}
+.turnbar .pip{width:36px;height:36px;border-radius:36px;flex:0 0 auto;display:flex;
+  align-items:center;justify-content:center;font-weight:800;font-size:17px;
+  background:var(--panelHi);color:var(--brass)}
+.turnbar.mine .pip{background:#22180A;color:var(--brass)}
+.turnbar .txt{min-width:0;flex:1}
+.turnbar .who{font-size:16.5px;font-weight:800;letter-spacing:-.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.turnbar .do{font-size:12.5px;margin-top:2px;opacity:.72;line-height:1.35}
+.turnbar.mine .do{opacity:.82}
+.turnbar .wait2{width:8px;height:8px;border-radius:8px;background:var(--brass);flex:0 0 auto}
+.now{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--brass);
+  border:1px solid var(--brass);border-radius:4px;padding:1px 4px;margin-left:6px;
+  vertical-align:middle}
+.lastline{text-align:center;font-size:12.5px;color:var(--dim);margin:11px 0 2px;line-height:1.4}
 .status{padding:15px 0 13px;text-align:center}
 .status .what{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;
   text-transform:uppercase;color:var(--dim)}
@@ -185,7 +202,7 @@ details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;ma
 <script>
 "use strict";
 
-var BUILD = "build 6 \u00b7 16 Aug";
+var BUILD = "build 7 \u00b7 16 Aug";
 
 /* ===================== tiny storage (safe if blocked) ===================== */
 var mem = {};
@@ -713,7 +730,8 @@ function boardHTML(grid, liveFn) {
 }
 function seatHeadHTML(p, hot, you) {
   return '<div class="seathd"><span class="nm' + (hot ? ' up' : '') + '">' + esc(p.name) +
-    (you ? ' (you)' : '') + (p.off ? ' &middot; away' : '') + '</span>' +
+    (you ? ' (you)' : '') + (p.off ? ' &middot; away' : '') +
+    (hot ? '<span class="now">NOW</span>' : '') + '</span>' +
     '<span class="sc">' + p.total + '</span></div>';
 }
 
@@ -934,15 +952,36 @@ function viewGame() {
       '<button class="btn" data-act="pass">' + btnTxt + '</button>' +
       '<div class="hint">' + hint + '</div></div>';
   } else {
-    var prompt;
-    if (g.phase === 'flip') prompt = flipping ? esc(me.name) + ' \u2014 flip any two' : 'Waiting on the others';
-    else if (!myTurn) prompt = esc(active.name) + ' is playing';
-    else if (g.drawn) prompt = g.drawn.src === 'deck' ? 'Swap it in, or throw it away' : 'Swap it into your grid';
-    else if (g.mustFlip) prompt = 'Turn one of your cards over';
-    else prompt = 'Take the discard, or draw';
-    var go = myTurn || flipping;
-    html += '<div class="status"><div class="what' + (go ? ' go' : ' pulse') + '">' + prompt + '</div>' +
-      (g.log[0] ? '<div class="last">' + esc(g.log[0]) + '</div>' : '') + '</div>';
+    var head, sub, mine, whoP;
+    if (g.phase === 'flip') {
+      mine = flipping;
+      whoP = flipping ? me : null;
+      if (flipping) {
+        head = g.mode === 'local' ? esc(me.name) + ', flip two' : 'Your two cards';
+        sub = 'Tap any two cards to turn them face up';
+      } else {
+        head = 'Waiting on the others';
+        sub = 'Everyone turns two cards over to start';
+      }
+    } else {
+      mine = myTurn;
+      whoP = g.players[g.turn];
+      if (g.mode === 'local') head = esc(whoP.name) + '\u2019s turn';
+      else head = myTurn ? 'Your turn' : esc(active.name) + '\u2019s turn';
+      if (myTurn) {
+        if (g.drawn) sub = g.drawn.src === 'deck' ? 'Swap it in, or drop it on the discard' : 'Swap it into your grid';
+        else if (g.mustFlip) sub = 'Turn one of your own cards over';
+        else sub = 'Take the discard, or draw from the deck';
+      } else {
+        sub = whoP.off ? 'Dropped out \u2014 waiting for them to rejoin' : 'Waiting for them to play\u2026';
+      }
+    }
+    var initial = whoP ? esc(whoP.name.charAt(0).toUpperCase()) : '\u2022';
+    html += '<div class="turnbar' + (mine ? ' mine' : '') + '">' +
+      '<span class="pip">' + initial + '</span>' +
+      '<span class="txt"><div class="who">' + head + '</div><div class="do">' + sub + '</div></span>' +
+      (mine ? '' : '<span class="wait2 pulse"></span>') + '</div>' +
+      (g.log[0] ? '<div class="lastline">' + esc(g.log[0]) + '</div>' : '');
   }
 
   /* piles */
