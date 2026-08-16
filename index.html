@@ -388,6 +388,7 @@ var app = {
   conns: [],           /* host: list of DataConnection */
   host: null,          /* guest: DataConnection to host */
   net: 'idle',         /* idle | connecting | live | lost */
+  stage: '',
   msg: '',
   busy: false
 };
@@ -430,6 +431,17 @@ function loadPeer() {
     tryNext();
   });
 }
+var wakeLock = null;
+function keepAwake() {
+  try {
+    if (navigator.wakeLock && !wakeLock) {
+      navigator.wakeLock.request('screen').then(function (l) {
+        wakeLock = l;
+        l.addEventListener('release', function () { wakeLock = null; });
+      }).catch(function () { });
+    }
+  } catch (e) { }
+}
 function broadcast() {
   if (!app.isHost) return;
   app.G.ts = Date.now();
@@ -463,7 +475,16 @@ function hostMsg(conn, m) {
 function startHost(code) {
   var peer = new Peer('skyjo-' + code, { debug: 0 });
   app.peer = peer;
+  var t0 = setTimeout(function () {
+    if (app.net === 'live') return;
+    try { peer.destroy(); } catch (x) { }
+    app.busy = false; app.net = 'idle'; app.screen = 'online';
+    app.msg = 'The matchmaking server never answered. It\u2019s a free public service and is sometimes down or blocked on mobile data \u2014 try wifi, or wait a minute.';
+    render();
+  }, 12000);
   peer.on('open', function () {
+    clearTimeout(t0);
+    keepAwake();
     app.net = 'live';
     app.code = code;
     app.isHost = true;
@@ -487,45 +508,76 @@ function startHost(code) {
     conn.on('error', function () { });
   });
   peer.on('error', function (e) {
-    if (e && e.type === 'unavailable-id') { try { peer.destroy(); } catch (x) { } startHost(makeCode()); return; }
+    var type = (e && e.type) || 'network';
+    if (type === 'unavailable-id') { try { peer.destroy(); } catch (x) { } startHost(makeCode()); return; }
+    if (app.screen === 'game') { if (type !== 'peer-unavailable') { app.net = 'lost'; render(); } return; }
     app.busy = false;
-    app.msg = 'Could not open a room (' + ((e && e.type) || 'network error') + '). Try again.';
-    app.net = 'lost'; render();
+    app.msg = 'Could not open a room (' + type + '). The free matchmaking server may be down \u2014 try again in a minute.';
+    app.net = 'lost'; app.screen = 'online'; render();
   });
   peer.on('disconnected', function () { app.net = 'lost'; render(); try { peer.reconnect(); } catch (x) { } });
 }
 function startGuest(code) {
+  var settled = false;
   var peer = new Peer(null, { debug: 0 });
   app.peer = peer;
   app.net = 'connecting';
+  app.stage = 'Step 1 of 2 — reaching the matchmaking server\u2026';
+  render();
+
+  function fail(msg) {
+    if (settled) return;
+    settled = true;
+    try { peer.destroy(); } catch (x) { }
+    app.busy = false; app.net = 'idle'; app.stage = ''; app.msg = msg;
+    app.screen = 'join'; render();
+  }
+
+  var t1 = setTimeout(function () {
+    fail('Step 1 failed: the matchmaking server never answered. That server is a free public one and is sometimes down or blocked on mobile data \u2014 try wifi, or wait a minute. Your room code is probably fine.');
+  }, 12000);
+
   peer.on('open', function () {
+    if (settled) return;
+    clearTimeout(t1);
+    app.stage = 'Step 2 of 2 — calling room ' + code + '\u2026';
+    if (app.screen === 'join') render();
+
     var conn = peer.connect('skyjo-' + code, { reliable: true });
     app.host = conn;
+
+    var t2 = setTimeout(function () {
+      fail('Step 2 failed: the server is fine, but room ' + code + ' never picked up. The host\u2019s page is most likely closed or asleep \u2014 ask them to reopen it and keep the screen on.');
+    }, 12000);
+
     conn.on('open', function () {
-      app.net = 'live'; app.busy = false; app.code = code;
+      settled = true; clearTimeout(t2);
+      app.net = 'live'; app.busy = false; app.code = code; app.stage = '';
       app.mode = 'online'; app.isHost = false; app.screen = 'game';
       conn.send({ t: 'hello', id: app.myId, name: app.name });
-      render();
+      keepAwake(); render();
     });
     conn.on('data', function (m) {
       if (m && m.t === 'state') { app.G = m.G; app.net = 'live'; render(); }
-      if (m && m.t === 'nope') { app.busy = false; app.msg = m.why; app.screen = 'join'; render(); }
+      if (m && m.t === 'nope') { settled = true; clearTimeout(t2); fail(m.why); }
     });
-    conn.on('close', function () { app.net = 'lost'; render(); });
-    conn.on('error', function () { app.net = 'lost'; render(); });
-    setTimeout(function () {
-      if (app.net !== 'live') {
-        app.busy = false; app.net = 'idle'; app.screen = 'join';
-        app.msg = 'No answer from room ' + code + '. Check the code, and make sure the host still has the page open.';
-        render();
-      }
-    }, 14000);
+    conn.on('close', function () { if (app.screen === 'game') { app.net = 'lost'; render(); } });
+    conn.on('error', function () { if (app.screen === 'game') { app.net = 'lost'; render(); } });
   });
+
   peer.on('error', function (e) {
-    app.busy = false; app.net = 'idle';
-    app.msg = 'Could not connect (' + ((e && e.type) || 'network error') + '). Check the code and try again.';
-    app.screen = 'join'; render();
+    var type = (e && e.type) || 'network';
+    if (app.screen === 'game') { if (type !== 'peer-unavailable') { app.net = 'lost'; render(); } return; }
+    clearTimeout(t1);
+    if (type === 'peer-unavailable') {
+      fail('No room called ' + code + ' is open right now. Double-check the four characters, and make sure the host still has their page open.');
+    } else if (type === 'browser-incompatible') {
+      fail('This browser can\u2019t make peer-to-peer connections. Try Safari or Chrome.');
+    } else {
+      fail('Connection failed (' + type + '). The free matchmaking server may be down \u2014 try again in a minute.');
+    }
   });
+  peer.on('disconnected', function () { if (app.screen === 'game') { app.net = 'lost'; render(); try { peer.reconnect(); } catch (x) { } } });
 }
 
 /* ============================== act ============================== */
@@ -616,6 +668,7 @@ function viewJoin() {
     '<div style="height:9px"></div>' +
     '<button class="btn" data-act="join"' + (app.busy ? ' disabled' : '') + '>' +
     (app.busy ? 'Connecting\u2026' : 'Join the table') + '</button>' +
+    (app.busy && app.stage ? '<p class="fine pulse" style="margin-top:10px">' + esc(app.stage) + '</p>' : '') +
     (app.msg ? '<p class="err">' + esc(app.msg) + '</p>' : '');
 }
 function viewLocal() {
@@ -661,8 +714,10 @@ function viewLobby() {
   return topHTML() +
     '<div style="padding:32px 0 8px"><div class="lbl" style="text-align:center">Share this code</div>' +
     '<div class="code">' + esc(g.code) + '</div></div>' +
-    '<p style="color:var(--dim);font-size:12.5px;text-align:center;margin:4px 0 24px">' +
+    '<p style="color:var(--dim);font-size:12.5px;text-align:center;margin:4px 0 10px">' +
     'Send everyone this page\u2019s link. They open it, tap <span style="color:var(--bone)">Join with a code</span>, and type ' + esc(g.code) + '.</p>' +
+    '<p style="color:var(--dim);font-size:12px;text-align:center;margin:0 0 24px">' +
+    '<span class="dot on"></span> Room registered and listening. Keep this page open and the screen on.</p>' +
     '<div class="lbl">Players (' + g.players.length + ')</div>' +
     '<div class="plist">' + list + '</div>' + btn;
 }
@@ -894,7 +949,10 @@ function boot() {
     var f = el.getAttribute('data-field');
     if (!f) return;
     if (f === 'name') { app.name = el.value; store.set('skyjo:name', el.value); }
-    else if (f === 'joinCode') { app.joinCode = el.value.toUpperCase(); }
+    else if (f === 'joinCode') {
+      app.joinCode = el.value.toUpperCase();
+      if (app.msg) { app.msg = ''; var old = rootEl.querySelector('.err'); if (old) old.remove(); }
+    }
     else if (f === 'local') { app.localNames[parseInt(el.getAttribute('data-i'), 10)] = el.value; }
   });
   window.addEventListener('beforeunload', function () { cleanup(); });
