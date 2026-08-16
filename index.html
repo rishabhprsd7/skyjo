@@ -137,6 +137,12 @@ p{line-height:1.6}
 .mini .card.back span{font-size:9px}
 .mini .card.live{box-shadow:none}
 
+.revrow{margin-bottom:18px}
+.mid .board{grid-template-columns:repeat(4,46px);gap:5px}
+.mid .card{width:46px;height:65px;font-size:20px;border-radius:6px}
+.mid .card.back span{font-size:15px}
+.card.drop{outline:3px dashed var(--brass);outline-offset:3px;box-shadow:none;background:var(--panelHi)}
+.arrow{align-self:flex-start;margin-top:32px;font-size:20px;color:var(--brass)}
 .hist{margin-top:22px;border-top:1px solid var(--rule);padding-top:12px}
 .hist div{font-size:12.5px;color:var(--rule);line-height:1.65}
 
@@ -174,7 +180,7 @@ details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;ma
 <script>
 "use strict";
 
-var BUILD = "build 4 \u00b7 16 Aug";
+var BUILD = "build 5 \u00b7 16 Aug";
 
 /* ===================== tiny storage (safe if blocked) ===================== */
 var mem = {};
@@ -398,6 +404,8 @@ var app = {
   msg: '',
   busy: false,
   turnRaw: store.get('skyjo:turn') || '',
+  showScores: false,
+  tallyKey: null,
   sawRelay: false
 };
 
@@ -779,6 +787,32 @@ function viewLobby() {
     '<div class="lbl">Players (' + g.players.length + ')</div>' +
     '<div class="plist">' + list + '</div>' + btn;
 }
+function syncTallyView() {
+  var g = app.G;
+  if (!g) return;
+  var isTally = g.phase === 'tally' || g.phase === 'over';
+  var key = isTally ? g.round + ':' + g.phase : null;
+  if (key !== app.tallyKey) { app.tallyKey = key; app.showScores = false; }
+}
+function viewReveal() {
+  var g = app.G;
+  var rows = g.players.map(function (p, i) {
+    var tags = '';
+    if (g.ender === i) tags += '<span class="tag">went out</span>';
+    if (p.doubled) tags += '<span class="tag x2">doubled</span>';
+    var d = p.roundScore > 0 ? '+' + p.roundScore : p.roundScore;
+    return '<div class="revrow"><div class="seathd"><span class="nm">' + esc(p.name) + tags + '</span>' +
+      '<span class="sc" style="color:var(--bone);font-size:15px;font-weight:700">' + d + '</span></div>' +
+      '<div class="mid">' + boardHTML(p.grid, null) + '</div></div>';
+  }).join('');
+  return topHTML() +
+    '<div style="text-align:center;padding:20px 0 16px">' +
+    '<div class="lbl">' + (g.phase === 'over' ? 'Last round' : 'Round ' + g.round) + '</div>' +
+    '<div class="win">Everyone turns over</div>' +
+    '<p style="color:var(--dim);font-size:12.5px;margin:8px 0 0">Dashed gaps are cleared columns \u2014 they count nothing.</p></div>' +
+    rows +
+    '<button class="btn" data-act="showScores">See the scores</button>';
+}
 function viewTally() {
   var g = app.G, done = g.phase === 'over';
   var sorted = g.players.map(function (p, i) { var q = clone(p); q.i = i; return q; })
@@ -797,16 +831,20 @@ function viewTally() {
     ? '<button class="btn" data-act="' + (done ? 'again' : 'nextRound') + '">' +
       (done ? 'Play again' : 'Deal the next round') + '</button>'
     : '<div class="wait pulse">Waiting for the host\u2026</div>';
+  var back = '<button class="btn ghost" data-act="hideScores">Look at the cards again</button>';
   return topHTML() + '<div class="tally"><div class="top2">' +
     '<div class="lbl">' + (done ? 'Final' : 'Round ' + g.round) + '</div>' +
     '<div class="win">' + (done ? esc(sorted[0].name) + ' wins' : 'Round over') + '</div></div>' +
-    rows + '<div style="height:16px"></div>' + btn + '</div>';
+    rows + '<div style="height:16px"></div>' + btn + back + '</div>';
 }
 function viewGame() {
   var g = app.G;
   if (!g) return '';
   if (g.phase === 'lobby') return viewLobby();
-  if (g.phase === 'tally' || g.phase === 'over') return viewTally();
+  if (g.phase === 'tally' || g.phase === 'over') {
+    syncTallyView();
+    return app.showScores ? viewTally() : viewReveal();
+  }
 
   var seat = mySeat();
   var me = seat >= 0 ? g.players[seat] : null;
@@ -844,19 +882,27 @@ function viewGame() {
   /* piles */
   var canDraw = myTurn && !g.drawn && !g.mustFlip;
   var canTake = canDraw && top !== null;
+  var anyDown = me && me.grid.some(function (c) { return !c.up && !c.gone; });
+  var canDump = myTurn && g.drawn && g.drawn.src === 'deck' && anyDown;
+
   var deckBtn = '<button class="card back' + (canDraw ? ' live' : '') + '"' +
     (canDraw ? ' data-act="drawDeck"' : ' disabled') + '><span>&#9670;</span></button>';
   var handHTML = g.drawn
     ? '<button class="card up ' + cardCls(g.drawn.v) + '" disabled>' + g.drawn.v + '</button><div class="cap hot">IN HAND</div>'
     : '<div class="empty"></div>';
+
+  var discCls = 'card up ' + cardCls(top) + (canTake ? ' live' : '') + (canDump ? ' drop' : '');
+  var discAct = canTake ? ' data-act="takeDiscard"' : (canDump ? ' data-act="dump"' : ' disabled');
   var discHTML = top !== null
-    ? '<button class="card up ' + cardCls(top) + (canTake ? ' live' : '') + '"' +
-      (canTake ? ' data-act="takeDiscard"' : ' disabled') + '>' + top + '</button>'
+    ? '<button class="' + discCls + '"' + discAct + '>' + top + '</button>'
     : '<div class="empty"></div>';
+  var discCap = canDump ? '<div class="cap hot pulse">DROP IT HERE</div>' : '<div class="cap">DISCARD</div>';
+
   html += '<div class="piles">' +
     '<div class="pile">' + deckBtn + '<div class="cap">DECK ' + g.deck.length + '</div></div>' +
     '<div class="pile">' + handHTML + '</div>' +
-    '<div class="pile">' + discHTML + '<div class="cap">DISCARD</div></div></div>';
+    (canDump ? '<div class="arrow pulse">&#8594;</div>' : '') +
+    '<div class="pile">' + discHTML + discCap + '</div></div>';
 
   /* choice panel */
   if (myTurn && g.drawn) {
@@ -864,7 +910,8 @@ function viewGame() {
     var tail = g.drawn.src === 'deck' ? ' \u2014' : '.';
     html += '<div class="panel"><div>' + lead + '<em>' + g.drawn.v + '</em>. Tap any card in your grid to swap it in' + tail + '</div>' +
       (g.drawn.src === 'deck'
-        ? '<button class="btn quiet" data-act="dump">Or throw it away and flip a card</button>'
+        ? '<button class="btn quiet" data-act="dump">Throw it away and flip a card</button>' +
+          '<div class="why">You can also just tap the discard pile above \u2014 the one ringed in gold.</div>'
         : '<div class="why">A card off the discard pile has to be used — you can\u2019t throw it back.</div>') +
       '</div>';
   }
@@ -945,6 +992,8 @@ var ACTS = {
   goJoin: function () { app.msg = ''; app.screen = 'join'; },
   goLocal: function () { app.msg = ''; app.screen = 'local'; },
   goNet: function () { app.msg = ''; app.screen = 'net'; },
+  showScores: function () { app.showScores = true; },
+  hideScores: function () { app.showScores = false; },
   saveNet: function () {
     var t = app.turnRaw.trim();
     if (t && !turnServers().length) { app.msg = 'That did not parse as an ICE server list. It should be a JSON array starting with [ and containing "urls".'; return; }
