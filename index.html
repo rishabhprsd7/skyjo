@@ -66,6 +66,11 @@ p{line-height:1.6}
 .brand{display:flex;align-items:center;gap:10px}
 .brand>span:first-child{font-size:17px;font-weight:800;letter-spacing:-.03em}
 .meta{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.14em}
+.chip{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.22em;
+  color:var(--brass);background:var(--panel);border:1px solid var(--rule);
+  padding:5px 6px 5px 12px;border-radius:8px;line-height:1}
+.chip.flat{color:var(--dim);font-size:11px;letter-spacing:.14em;padding:6px 10px}
+.chip.done{color:var(--green);border-color:var(--green)}
 .dot{width:6px;height:6px;border-radius:6px;display:inline-block}
 .dot.on{background:var(--green)} .dot.off{background:#FBBF24}
 .leave{background:none;color:var(--dim);font-family:var(--mono);font-size:10.5px;
@@ -180,7 +185,7 @@ details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;ma
 <script>
 "use strict";
 
-var BUILD = "build 5 \u00b7 16 Aug";
+var BUILD = "build 6 \u00b7 16 Aug";
 
 /* ===================== tiny storage (safe if blocked) ===================== */
 var mem = {};
@@ -405,6 +410,7 @@ var app = {
   busy: false,
   turnRaw: store.get('skyjo:turn') || '',
   showScores: false,
+  copied: false,
   tallyKey: null,
   sawRelay: false
 };
@@ -433,6 +439,23 @@ function watchIce(conn) {
   } catch (e) { }
 }
 
+function saveSession() {
+  if (app.mode !== 'online' || !app.G || !app.code) return;
+  try {
+    store.set('skyjo:session', JSON.stringify({
+      code: app.code, isHost: app.isHost, at: Date.now(),
+      G: app.isHost ? app.G : null
+    }));
+  } catch (e) { }
+}
+function loadSession() {
+  try {
+    var j = JSON.parse(store.get('skyjo:session') || 'null');
+    if (!j || !j.code) return null;
+    if (Date.now() - (j.at || 0) > 6 * 3600 * 1000) return null;
+    return j;
+  } catch (e) { return null; }
+}
 function newPlayer(id, nm) {
   return { id: id, name: String(nm || 'Player').slice(0, 12) || 'Player', grid: [], total: 0, roundScore: null, doubled: false, off: false };
 }
@@ -485,6 +508,7 @@ function keepAwake() {
 function broadcast() {
   if (!app.isHost) return;
   app.G.ts = Date.now();
+  saveSession();
   var payload = { t: 'state', G: app.G };
   app.conns.forEach(function (c) { if (c && c.open) { try { c.send(payload); } catch (e) { /* dropped */ } } });
 }
@@ -512,7 +536,7 @@ function hostMsg(conn, m) {
     if (MOVES[m.m]) { MOVES[m.m](g, seat, m.a); broadcast(); render(); }
   }
 }
-function startHost(code) {
+function startHost(code, restore) {
   var peer = new Peer('skyjo-' + code, peerOpts());
   app.peer = peer;
   var t0 = setTimeout(function () {
@@ -529,12 +553,19 @@ function startHost(code) {
     app.code = code;
     app.isHost = true;
     app.mode = 'online';
-    app.G = {
-      mode: 'online', code: code, round: 1, phase: 'lobby',
-      players: [newPlayer(app.myId, app.name)],
-      deck: [], discard: [], turn: 0, drawn: null, mustFlip: false,
-      ender: null, handoff: null, log: [], ts: Date.now()
-    };
+    if (restore) {
+      app.G = restore;
+      app.G.code = code;
+      app.G.players.forEach(function (p) { if (p.id !== app.myId) p.off = true; });
+    } else {
+      app.G = {
+        mode: 'online', code: code, round: 1, phase: 'lobby',
+        players: [newPlayer(app.myId, app.name)],
+        deck: [], discard: [], turn: 0, drawn: null, mustFlip: false,
+        ender: null, handoff: null, log: [], ts: Date.now()
+      };
+    }
+    saveSession();
     app.busy = false; app.screen = 'game'; render();
   });
   peer.on('connection', function (conn) {
@@ -542,8 +573,10 @@ function startHost(code) {
     conn.on('data', function (m) { hostMsg(conn, m); });
     conn.on('close', function () {
       app.conns = app.conns.filter(function (c) { return c !== conn; });
-      var at = seatOf(conn.playerId);
-      if (at >= 0 && app.G) { app.G.players[at].off = true; broadcast(); render(); }
+      var pid = conn.playerId;
+      var stillHere = app.conns.some(function (c) { return c.playerId === pid && c.open; });
+      var at = seatOf(pid);
+      if (at >= 0 && app.G && !stillHere) { app.G.players[at].off = true; broadcast(); render(); }
     });
     conn.on('error', function () { });
   });
@@ -557,18 +590,32 @@ function startHost(code) {
   });
   peer.on('disconnected', function () { app.net = 'lost'; render(); try { peer.reconnect(); } catch (x) { } });
 }
-function startGuest(code) {
+var rejoinTimer = null, rejoinTries = 0;
+function scheduleRejoin(code) {
+  if (rejoinTimer) return;
+  if (rejoinTries >= 8) { app.net = 'lost'; render(); return; }
+  rejoinTries++;
+  rejoinTimer = setTimeout(function () { rejoinTimer = null; rejoinNow(code); }, 3500);
+}
+function rejoinNow(code) {
+  if (rejoinTimer) { clearTimeout(rejoinTimer); rejoinTimer = null; }
+  try { if (app.peer) app.peer.destroy(); } catch (e) { }
+  app.peer = null; app.host = null;
+  startGuest(code, true);
+}
+function startGuest(code, silent) {
   var settled = false;
   var peer = new Peer(null, peerOpts());
   app.peer = peer;
-  app.net = 'connecting';
-  app.stage = 'Step 1 of 2 — reaching the matchmaking server\u2026';
+  app.net = silent ? 'lost' : 'connecting';
+  app.stage = silent ? '' : 'Step 1 of 2 — reaching the matchmaking server\u2026';
   render();
 
   function fail(msg) {
     if (settled) return;
     settled = true;
     try { peer.destroy(); } catch (x) { }
+    if (silent) { app.net = 'lost'; app.stage = ''; render(); scheduleRejoin(code); return; }
     app.busy = false; app.net = 'idle'; app.stage = ''; app.msg = msg;
     app.screen = 'join'; render();
   }
@@ -580,8 +627,7 @@ function startGuest(code) {
   peer.on('open', function () {
     if (settled) return;
     clearTimeout(t1);
-    app.stage = 'Step 2 of 2 — calling room ' + code + '\u2026';
-    if (app.screen === 'join') render();
+    if (!silent) { app.stage = 'Step 2 of 2 — calling room ' + code + '\u2026'; if (app.screen === 'join') render(); }
 
     var conn = peer.connect('skyjo-' + code, { reliable: true });
     app.host = conn;
@@ -599,13 +645,15 @@ function startGuest(code) {
       app.net = 'live'; app.busy = false; app.code = code; app.stage = '';
       app.mode = 'online'; app.isHost = false; app.screen = 'game';
       conn.send({ t: 'hello', id: app.myId, name: app.name });
-      keepAwake(); render();
+      rejoinTries = 0; saveSession(); keepAwake(); render();
     });
     conn.on('data', function (m) {
-      if (m && m.t === 'state') { app.G = m.G; app.net = 'live'; render(); }
+      if (m && m.t === 'state') { app.G = m.G; app.net = 'live'; saveSession(); render(); }
       if (m && m.t === 'nope') { settled = true; clearTimeout(t2); fail(m.why); }
     });
-    conn.on('close', function () { if (app.screen === 'game') { app.net = 'lost'; render(); } });
+    conn.on('close', function () {
+      if (app.screen === 'game') { app.net = 'lost'; render(); scheduleRejoin(code); }
+    });
     conn.on('error', function () { if (app.screen === 'game') { app.net = 'lost'; render(); } });
   });
 
@@ -681,6 +729,13 @@ function viewHome() {
     '<button class="btn" data-act="goOnline">Start a new game</button>' +
     '<button class="btn quiet" data-act="goJoin">Join with a code</button>' +
     '<button class="btn ghost" data-act="goLocal">Play on one device</button>' +
+    (function () {
+      var ss = loadSession();
+      if (!ss) return '';
+      return '<div style="height:6px"></div><button class="btn quiet" data-act="resume">' +
+        (ss.isHost ? 'Resume hosting ' : 'Rejoin ') + esc(ss.code) + '</button>' +
+        '<div style="text-align:center"><button class="leave" data-act="forget">FORGET THIS ROOM</button></div>';
+    })() +
     '<div style="text-align:center;margin-top:14px"><button class="leave" data-act="goNet">NETWORK SETTINGS' +
     (turnServers().length ? ' &middot; RELAY ON' : '') + '</button></div>' +
     '<div style="text-align:center;margin-top:10px;font-family:var(--mono);font-size:10px;' +
@@ -761,9 +816,12 @@ function topHTML() {
     var w = 100 / g.players.length;
     bar = '<i style="width:' + w + '%;margin-left:' + (w * g.turn) + '%"></i>';
   }
+  var chip = app.mode === 'online'
+    ? '<button class="chip' + (app.copied ? ' done' : '') + '" data-act="copyCode">' +
+      (app.copied ? 'COPIED' : esc(g.code)) + '</button>'
+    : '<span class="chip flat">TABLE</span>';
   return '<div class="top"><div class="topin"><div class="brand">' +
-    '<span>SKYJO</span><span class="meta">' + (app.mode === 'online' ? esc(g.code) : 'TABLE') +
-    ' &middot; R' + g.round + '</span>' + netHTML + '</div>' +
+    chip + '<span class="meta">R' + g.round + '</span>' + netHTML + '</div>' +
     '<button class="leave" data-act="home">LEAVE</button></div>' +
     '<div class="bar">' + bar + '</div></div>';
 }
@@ -854,6 +912,14 @@ function viewGame() {
   var active = g.players[g.turn];
   var top = g.discard.length ? g.discard[g.discard.length - 1] : null;
   var html = topHTML();
+
+  if (app.mode === 'online' && app.net !== 'live') {
+    html += '<div class="panel hot"><div class="ttl">Connection lost</div>' +
+      '<div>You have dropped out of room <b style="color:var(--brass)">' + esc(g.code) + '</b>. ' +
+      'Your cards are safe — the host is holding your seat.</div>' +
+      '<button class="btn" data-act="rejoin">Rejoin ' + esc(g.code) + '</button>' +
+      '<div class="hint">Retrying on its own every few seconds.</div></div>';
+  }
 
   /* status or handoff */
   if (held) {
@@ -993,6 +1059,25 @@ var ACTS = {
   goLocal: function () { app.msg = ''; app.screen = 'local'; },
   goNet: function () { app.msg = ''; app.screen = 'net'; },
   showScores: function () { app.showScores = true; },
+  copyCode: function () {
+    var c = app.G && app.G.code;
+    if (!c) return;
+    try { if (navigator.clipboard) navigator.clipboard.writeText(c); } catch (e) { }
+    app.copied = true; render();
+    setTimeout(function () { app.copied = false; render(); }, 1500);
+  },
+  rejoin: function () { if (app.code) { rejoinTries = 0; rejoinNow(app.code); } },
+  forget: function () { store.set('skyjo:session', ''); },
+  resume: function () {
+    var ss = loadSession();
+    if (!ss) return;
+    if (!app.name.trim()) { app.msg = 'Enter a name first.'; return; }
+    app.busy = true; app.msg = ''; app.code = ss.code;
+    loadPeer().then(function () {
+      if (ss.isHost && ss.G) startHost(ss.code, ss.G);
+      else startGuest(ss.code);
+    }).catch(function (e) { app.busy = false; app.msg = e.message; render(); });
+  },
   hideScores: function () { app.showScores = false; },
   saveNet: function () {
     var t = app.turnRaw.trim();
