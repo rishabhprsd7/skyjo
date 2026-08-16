@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#170F11">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="description" content="Skyjo — play online with a room code, or pass one phone around the table.">
 <title>Skyjo</title>
 <style>
@@ -170,6 +173,8 @@ details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;ma
 <div id="app"></div>
 <script>
 "use strict";
+
+var BUILD = "build 4 \u00b7 16 Aug";
 
 /* ===================== tiny storage (safe if blocked) ===================== */
 var mem = {};
@@ -576,7 +581,7 @@ function startGuest(code) {
 
     var t2 = setTimeout(function () {
       var hasTurn = turnServers().length > 0;
-      fail('Step 2 failed: room ' + code + ' was found and answered, but the two devices could not open a direct connection. '
+      fail('[' + BUILD + '] Step 2 failed: room ' + code + ' was found and answered, but the two devices could not open a direct connection. '
         + (hasTurn ? 'A TURN relay is configured but was not usable \u2014 check the credentials in Network settings.'
                    : 'This is normal on mobile data. Put both devices on the same wifi, or add a TURN relay in Network settings.'));
     }, 12000);
@@ -670,6 +675,8 @@ function viewHome() {
     '<button class="btn ghost" data-act="goLocal">Play on one device</button>' +
     '<div style="text-align:center;margin-top:14px"><button class="leave" data-act="goNet">NETWORK SETTINGS' +
     (turnServers().length ? ' &middot; RELAY ON' : '') + '</button></div>' +
+    '<div style="text-align:center;margin-top:10px;font-family:var(--mono);font-size:10px;' +
+    'letter-spacing:.14em;color:var(--rule)">' + BUILD + '</div>' +
     (app.msg ? '<p class="err">' + esc(app.msg) + '</p>' : '') +
     '<details><summary>+ How it works</summary><ol>' +
     '<li>You get 12 cards face down in a 4&times;3 grid. Flip any two to start.</li>' +
