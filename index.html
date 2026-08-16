@@ -25,7 +25,8 @@ body{
 button{font:inherit;cursor:pointer;border:none;color:inherit}
 button:disabled{cursor:default}
 button:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
-input{font:inherit}
+input,textarea{font:inherit}
+textarea.fld{font-family:var(--mono);font-size:12px;line-height:1.5;resize:vertical}
 h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.02em}
 p{line-height:1.6}
 
@@ -390,8 +391,34 @@ var app = {
   net: 'idle',         /* idle | connecting | live | lost */
   stage: '',
   msg: '',
-  busy: false
+  busy: false,
+  turnRaw: store.get('skyjo:turn') || '',
+  sawRelay: false
 };
+
+function turnServers() {
+  if (!app.turnRaw.trim()) return [];
+  try {
+    var j = JSON.parse(app.turnRaw);
+    if (Array.isArray(j)) return j;
+    if (j && Array.isArray(j.iceServers)) return j.iceServers;
+    if (j && j.urls) return [j];
+  } catch (e) { }
+  return [];
+}
+function peerOpts() {
+  var base = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  return { debug: 0, config: { iceServers: base.concat(turnServers()) } };
+}
+function watchIce(conn) {
+  try {
+    var pc = conn.peerConnection;
+    if (!pc) { setTimeout(function () { watchIce(conn); }, 400); return; }
+    pc.addEventListener('icecandidate', function (ev) {
+      if (ev.candidate && ev.candidate.candidate.indexOf('typ relay') >= 0) app.sawRelay = true;
+    });
+  } catch (e) { }
+}
 
 function newPlayer(id, nm) {
   return { id: id, name: String(nm || 'Player').slice(0, 12) || 'Player', grid: [], total: 0, roundScore: null, doubled: false, off: false };
@@ -473,7 +500,7 @@ function hostMsg(conn, m) {
   }
 }
 function startHost(code) {
-  var peer = new Peer('skyjo-' + code, { debug: 0 });
+  var peer = new Peer('skyjo-' + code, peerOpts());
   app.peer = peer;
   var t0 = setTimeout(function () {
     if (app.net === 'live') return;
@@ -519,7 +546,7 @@ function startHost(code) {
 }
 function startGuest(code) {
   var settled = false;
-  var peer = new Peer(null, { debug: 0 });
+  var peer = new Peer(null, peerOpts());
   app.peer = peer;
   app.net = 'connecting';
   app.stage = 'Step 1 of 2 — reaching the matchmaking server\u2026';
@@ -545,9 +572,13 @@ function startGuest(code) {
 
     var conn = peer.connect('skyjo-' + code, { reliable: true });
     app.host = conn;
+    app.sawRelay = false; watchIce(conn);
 
     var t2 = setTimeout(function () {
-      fail('Step 2 failed: the server is fine, but room ' + code + ' never picked up. The host\u2019s page is most likely closed or asleep \u2014 ask them to reopen it and keep the screen on.');
+      var hasTurn = turnServers().length > 0;
+      fail('Step 2 failed: room ' + code + ' was found and answered, but the two devices could not open a direct connection. '
+        + (hasTurn ? 'A TURN relay is configured but was not usable \u2014 check the credentials in Network settings.'
+                   : 'This is normal on mobile data. Put both devices on the same wifi, or add a TURN relay in Network settings.'));
     }, 12000);
 
     conn.on('open', function () {
@@ -637,6 +668,8 @@ function viewHome() {
     '<button class="btn" data-act="goOnline">Start a new game</button>' +
     '<button class="btn quiet" data-act="goJoin">Join with a code</button>' +
     '<button class="btn ghost" data-act="goLocal">Play on one device</button>' +
+    '<div style="text-align:center;margin-top:14px"><button class="leave" data-act="goNet">NETWORK SETTINGS' +
+    (turnServers().length ? ' &middot; RELAY ON' : '') + '</button></div>' +
     (app.msg ? '<p class="err">' + esc(app.msg) + '</p>' : '') +
     '<details><summary>+ How it works</summary><ol>' +
     '<li>You get 12 cards face down in a 4&times;3 grid. Flip any two to start.</li>' +
@@ -681,6 +714,24 @@ function viewLocal() {
     (app.localNames.length < 8 ? '<button class="btn quiet sm" data-act="addLocal">Add a player</button>' : '') +
     (app.localNames.length > 2 ? '<button class="btn ghost sm" data-act="delLocal">Remove</button>' : '') +
     '</div><button class="btn" data-act="startLocal">Deal</button>';
+}
+function viewNet() {
+  var n = turnServers().length;
+  return '<div class="hd"><button class="back" data-act="home">&larr;</button><h1>Network</h1></div>' +
+    '<p style="color:var(--dim);font-size:14px;margin-top:0">Two phones on mobile data usually cannot connect to each other directly \u2014 mobile carriers sit behind strict NAT. A TURN relay forwards the traffic so the game works anywhere.</p>' +
+    '<div class="panel" style="animation:none"><b>Getting one is free.</b><div class="why" style="color:var(--dim)">' +
+    '1. Sign up at metered.ca (free tier, 20&nbsp;GB a month \u2014 this game uses a trickle).<br>' +
+    '2. Open the TURN Server page and generate a credential.<br>' +
+    '3. Copy the JSON array it shows you and paste it below.</div></div>' +
+    '<div style="height:14px"></div><div class="lbl">ICE servers (JSON)</div>' +
+    '<textarea class="fld" data-field="turn" rows="7" spellcheck="false" ' +
+    'placeholder=\'[{"urls":"turn:...","username":"...","credential":"..."}]\'>' + esc(app.turnRaw) + '</textarea>' +
+    '<div style="height:4px"></div>' +
+    '<button class="btn" data-act="saveNet">Save</button>' +
+    '<button class="btn ghost" data-act="clearNet">Clear</button>' +
+    (app.msg ? '<p class="err">' + esc(app.msg) + '</p>' : '') +
+    '<p class="fine">' + (n ? '\u2713 ' + n + ' relay server' + (n === 1 ? '' : 's') + ' saved. Stored on this device only \u2014 each player adds their own.'
+                            : 'No relay configured. Games still work over the same wifi, and pass-and-play always works.') + '</p>';
 }
 function topHTML() {
   var g = app.G;
@@ -864,6 +915,7 @@ function render() {
     else if (app.screen === 'online') html = viewOnline();
     else if (app.screen === 'join') html = viewJoin();
     else if (app.screen === 'local') html = viewLocal();
+    else if (app.screen === 'net') html = viewNet();
     else html = viewGame();
   } catch (e) {
     html = '<div class="hd"><h1>The table tipped over</h1></div>' +
@@ -885,6 +937,14 @@ var ACTS = {
   goOnline: function () { app.msg = ''; app.screen = 'online'; },
   goJoin: function () { app.msg = ''; app.screen = 'join'; },
   goLocal: function () { app.msg = ''; app.screen = 'local'; },
+  goNet: function () { app.msg = ''; app.screen = 'net'; },
+  saveNet: function () {
+    var t = app.turnRaw.trim();
+    if (t && !turnServers().length) { app.msg = 'That did not parse as an ICE server list. It should be a JSON array starting with [ and containing "urls".'; return; }
+    store.set('skyjo:turn', t);
+    app.msg = ''; app.screen = 'home';
+  },
+  clearNet: function () { app.turnRaw = ''; store.set('skyjo:turn', ''); app.msg = ''; },
 
   create: function () {
     if (!app.name.trim()) { app.msg = 'Enter a name first.'; return; }
@@ -954,6 +1014,7 @@ function boot() {
       if (app.msg) { app.msg = ''; var old = rootEl.querySelector('.err'); if (old) old.remove(); }
     }
     else if (f === 'local') { app.localNames[parseInt(el.getAttribute('data-i'), 10)] = el.value; }
+    else if (f === 'turn') { app.turnRaw = el.value; }
   });
   window.addEventListener('beforeunload', function () { cleanup(); });
   setInterval(function () {
