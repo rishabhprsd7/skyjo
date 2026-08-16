@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#170F11">
+<meta name="description" content="Skyjo — play online with a room code, or pass one phone around the table.">
+<title>Skyjo</title>
+<style>
+:root{
+  --deep:#170F11; --table:#22181A; --panel:#2E2124; --panelHi:#3A2A2E;
+  --rule:#4A3639; --bone:#F2E9DC; --dim:#A2938A; --brass:#C9A227; --brassDim:#7A6318;
+  --red:#F87171; --green:#4ADE80;
+  --sans:ui-rounded,'SF Pro Rounded',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  background:var(--deep);color:var(--bone);font-family:var(--sans);
+  min-height:100vh;min-height:100dvh;
+  padding:0 14px calc(40px + env(safe-area-inset-bottom));
+}
+#app{max-width:460px;margin:0 auto}
+button{font:inherit;cursor:pointer;border:none;color:inherit}
+button:disabled{cursor:default}
+button:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+input{font:inherit}
+h1{margin:0;font-size:21px;font-weight:800;letter-spacing:-.02em}
+p{line-height:1.6}
+
+.mark{display:flex;gap:5px;padding-top:30px}
+.mark b{width:40px;height:54px;border-radius:7px;display:flex;align-items:center;
+  justify-content:center;font-size:26px;font-weight:800;letter-spacing:-.04em}
+.mark b:nth-child(1){transform:rotate(-4deg)}
+.mark b:nth-child(2){transform:rotate(2deg)}
+.mark b:nth-child(3){transform:rotate(-1deg)}
+.mark b:nth-child(4){transform:rotate(3deg)}
+.mark b:nth-child(5){transform:rotate(-3deg)}
+.sub{color:var(--dim);font-size:14px;margin:18px 0 22px}
+
+.lbl{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--dim);margin-bottom:8px}
+.fld{width:100%;padding:13px 14px;border-radius:10px;background:var(--panel);
+  border:1px solid var(--rule);color:var(--bone);font-size:16px;margin-bottom:9px}
+.fld.code{font-family:var(--mono);font-size:22px;letter-spacing:.28em;text-align:center;
+  text-transform:uppercase}
+.btn{width:100%;padding:14px 16px;border-radius:10px;background:var(--brass);color:#22180A;
+  font-weight:700;font-size:15px;margin-bottom:9px;display:block}
+.btn.quiet{background:var(--panel);color:var(--bone)}
+.btn.ghost{background:transparent;color:var(--dim);border:1px solid var(--rule)}
+.btn.sm{padding:9px 12px;font-size:13px;width:auto;margin:0}
+.btn:disabled{opacity:.4}
+.row{display:flex;gap:8px}
+.back{background:var(--panel);width:34px;height:34px;border-radius:9px;font-size:17px;flex:0 0 auto}
+.hd{display:flex;align-items:center;gap:12px;padding:26px 0 18px}
+.err{color:#E7A0A0;font-size:13px;margin:12px 0 0;line-height:1.5}
+.fine{color:var(--dim);font-size:12px;line-height:1.6;margin-top:22px}
+
+.top{padding-top:18px}
+.topin{display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:10px}
+.brand>span:first-child{font-size:17px;font-weight:800;letter-spacing:-.03em}
+.meta{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:.14em}
+.dot{width:6px;height:6px;border-radius:6px;display:inline-block}
+.dot.on{background:var(--green)} .dot.off{background:#FBBF24}
+.leave{background:none;color:var(--dim);font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.14em;padding:0}
+.bar{height:3px;border-radius:3px;background:var(--rule);margin-top:12px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--brass);transition:margin-left .35s ease}
+
+.status{padding:15px 0 13px;text-align:center}
+.status .what{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--dim)}
+.status .what.go{color:var(--brass)}
+.status .last{font-size:12.5px;color:var(--dim);margin-top:6px;line-height:1.4}
+.pulse{animation:pl 2.2s ease-in-out infinite}
+@keyframes pl{0%,100%{opacity:.55}50%{opacity:1}}
+
+.piles{display:flex;align-items:flex-start;justify-content:center;gap:16px;margin-top:4px}
+.pile{text-align:center;min-width:68px}
+.cap{font-family:var(--mono);font-size:10px;color:var(--dim);margin-top:6px;letter-spacing:.1em}
+.cap.hot{color:var(--brass)}
+.empty{width:62px;height:88px;border-radius:8px;border:1px dashed var(--rule);
+  opacity:.5;margin:0 auto}
+
+.panel{margin-top:14px;padding:13px;border-radius:12px;background:var(--panel);
+  border:1px solid var(--rule);font-size:13.5px;line-height:1.5;animation:ri .28s ease-out both}
+.panel.hot{border-color:var(--brass)}
+.panel em{font-style:normal;color:var(--brass);font-weight:700}
+.panel .why{font-size:12px;color:var(--dim);margin-top:7px}
+.panel .btn{margin:12px 0 0}
+.panel .hint{font-size:11.5px;color:var(--dim);margin-top:9px;text-align:center}
+.panel .ttl{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--brass);margin-bottom:8px}
+@keyframes ri{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+
+.seat{margin-top:20px}
+.seathd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;gap:10px}
+.seathd .nm{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:200px}
+.seathd .nm.up{color:var(--brass)}
+.seathd .sc{font-family:var(--mono);font-size:13px;color:var(--dim)}
+
+.board{display:grid;grid-template-columns:repeat(4,72px);gap:7px}
+.card{width:72px;height:102px;border-radius:9px;padding:0;display:flex;align-items:center;
+  justify-content:center;font-size:33px;font-weight:800;letter-spacing:-.05em;
+  border:2px solid var(--rule);background:var(--panelHi);color:var(--brassDim)}
+.card.up{animation:fi .34s cubic-bezier(.34,1.4,.5,1) both}
+@keyframes fi{from{transform:rotateY(-88deg)}to{transform:rotateY(0)}}
+.card.live{border-color:var(--brass);box-shadow:0 0 0 3px rgba(201,162,39,.25)}
+.card.slot{border:1px dashed var(--rule);opacity:.35;background:none}
+.card.back span{font-size:24px;opacity:.7}
+.c-neg{background:#1D4ED8;color:#EFF6FF;border-color:#132F87}
+.c-zero{background:#7DD3FC;color:#0C4A6E;border-color:#4FA8CC}
+.c-low{background:#4ADE80;color:#052E16;border-color:#2E9E58}
+.c-mid{background:#FBBF24;color:#451A03;border-color:#C08C0C}
+.c-high{background:#F87171;color:#450A0A;border-color:#C24A4A}
+
+.pile .card{width:62px;height:88px;font-size:29px;border-radius:8px}
+.pile .card.back span{font-size:21px}
+
+.rail{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;margin-top:8px}
+.rail::-webkit-scrollbar{height:4px}
+.rail::-webkit-scrollbar-thumb{background:var(--rule);border-radius:4px}
+.mini{flex:0 0 auto;padding:10px;border-radius:12px;background:var(--table);
+  border:1px solid var(--rule)}
+.mini.up{border-color:var(--brass)}
+.mini .seathd .nm{font-size:12px;max-width:96px}
+.mini .seathd .sc{font-size:11px}
+.mini .board{grid-template-columns:repeat(4,26px);gap:4px}
+.mini .card{width:26px;height:37px;font-size:12px;border-radius:4px;border-width:1px}
+.mini .card.back span{font-size:9px}
+.mini .card.live{box-shadow:none}
+
+.hist{margin-top:22px;border-top:1px solid var(--rule);padding-top:12px}
+.hist div{font-size:12.5px;color:var(--rule);line-height:1.65}
+
+.tally{padding:26px 0 8px}
+.tally .top2{text-align:center;margin-bottom:22px}
+.tally .win{font-size:24px;font-weight:800;letter-spacing:-.03em}
+.line{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;
+  background:var(--panel);border:1px solid transparent;margin-bottom:6px}
+.line.first{background:var(--panelHi);border-color:var(--brass)}
+.line .rk{font-family:var(--mono);font-size:11px;color:var(--dim);width:14px}
+.line .nm{flex:1;font-weight:600;font-size:14px}
+.line .tag{font-size:11px;margin-left:7px;color:var(--dim)}
+.line .tag.x2{color:var(--red)}
+.line .d{font-family:var(--mono);font-size:12px;color:var(--dim);width:42px;text-align:right}
+.line .t{font-family:var(--mono);font-size:17px;font-weight:700;width:42px;text-align:right}
+
+.code{font-family:var(--mono);font-size:52px;font-weight:700;letter-spacing:.16em;
+  color:var(--brass);text-align:center}
+.plist{display:grid;gap:7px;margin-bottom:20px}
+.pl{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;
+  border-radius:10px;background:var(--panel);font-size:14px}
+.pl .nm{font-weight:600}
+.pl .tg{font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.12em}
+.wait{text-align:center;color:var(--dim);font-size:13px}
+details{margin-top:26px;border-top:1px solid var(--rule);padding-top:14px}
+summary{color:var(--dim);font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;cursor:pointer;list-style:none}
+summary::-webkit-details-marker{display:none}
+details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;margin-top:12px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+"use strict";
+
+/* ===================== tiny storage (safe if blocked) ===================== */
+var mem = {};
+var store = {
+  get: function (k) { try { return localStorage.getItem(k); } catch (e) { return k in mem ? mem[k] : null; } },
+  set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) { mem[k] = v; } }
+};
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function makeCode() {
+  var s = '';
+  for (var i = 0; i < 4; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+  return s;
+}
+function rid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+/* ============================== rules engine ============================== */
+var COLS = [[0, 4, 8], [1, 5, 9], [2, 6, 10], [3, 7, 11]];
+
+function shuffle(a) {
+  var b = a.slice(), i, j, t;
+  for (i = b.length - 1; i > 0; i--) { j = Math.floor(Math.random() * (i + 1)); t = b[i]; b[i] = b[j]; b[j] = t; }
+  return b;
+}
+function buildDeck() {
+  var d = [], v, i;
+  function add(val, n) { for (var k = 0; k < n; k++) d.push(val); }
+  add(-2, 5); add(-1, 10); add(0, 15);
+  for (v = 1; v <= 12; v++) add(v, 10);
+  return shuffle(d);
+}
+function upCount(p) { return p.grid.filter(function (c) { return c.up && !c.gone; }).length; }
+function upSum(p) { return p.grid.reduce(function (s, c) { return c.up && !c.gone ? s + c.v : s; }, 0); }
+function isOut(p) { return p.grid.every(function (c) { return c.gone || c.up; }); }
+function rawScore(p) { return p.grid.reduce(function (s, c) { return c.gone ? s : s + c.v; }, 0); }
+function note(g, t) { g.log = [t].concat(g.log).slice(0, 12); }
+
+function clearColumns(p, discard) {
+  var did = false;
+  COLS.forEach(function (col) {
+    var cs = col.map(function (i) { return p.grid[i]; });
+    var all = cs.every(function (c) { return !c.gone && c.up; });
+    if (all && cs[0].v === cs[1].v && cs[1].v === cs[2].v) {
+      col.forEach(function (i) { discard.push(p.grid[i].v); p.grid[i].gone = true; });
+      did = true;
+    }
+  });
+  return did;
+}
+function refillDeck(g) {
+  if (g.deck.length === 0 && g.discard.length > 1) {
+    var top = g.discard.pop();
+    g.deck = shuffle(g.discard);
+    g.discard = [top];
+  }
+}
+function dealRound(g) {
+  var deck = buildDeck();
+  g.players.forEach(function (p) {
+    p.grid = [];
+    for (var i = 0; i < 12; i++) p.grid.push({ v: deck.pop(), up: false, gone: false });
+    p.roundScore = null;
+    p.doubled = false;
+  });
+  g.deck = deck;
+  g.discard = [deck.pop()];
+  g.drawn = null; g.mustFlip = false; g.ender = null; g.handoff = null;
+  g.turn = 0; g.phase = 'flip';
+  g.log = ['Round ' + g.round + ' begins.'];
+}
+function beginPlay(g) {
+  var best = -Infinity, idx = 0;
+  g.players.forEach(function (p, i) { var s = upSum(p); if (s > best) { best = s; idx = i; } });
+  g.turn = idx; g.phase = 'play';
+  note(g, g.players[idx].name + ' showed the highest pair and starts.');
+}
+function scoreRound(g) {
+  g.players.forEach(function (p) { p.grid.forEach(function (c) { c.up = true; }); });
+  g.players.forEach(function (p) { while (clearColumns(p, g.discard)) { /* cascade */ } });
+  var scores = g.players.map(rawScore);
+  var e = g.ender;
+  if (e !== null && e !== undefined) {
+    var min = Math.min.apply(null, scores);
+    var ties = scores.filter(function (x) { return x === min; }).length;
+    var sole = scores[e] === min && ties === 1;
+    if (!sole && scores[e] > 0) { scores[e] = scores[e] * 2; g.players[e].doubled = true; }
+  }
+  g.players.forEach(function (p, i) { p.roundScore = scores[i]; p.total += scores[i]; });
+  g.handoff = null;
+  g.phase = g.players.some(function (p) { return p.total >= 100; }) ? 'over' : 'tally';
+}
+function endTurn(g) {
+  var from = g.turn, p = g.players[from];
+  if (g.ender === null && isOut(p)) {
+    g.ender = from;
+    note(g, p.name + ' is out — everyone else gets one last turn.');
+  }
+  var next = (from + 1) % g.players.length;
+  if (g.ender !== null && next === g.ender) { scoreRound(g); return; }
+  g.turn = next;
+  if (g.mode === 'local') g.handoff = { from: from, next: next };
+}
+
+/* ============================== moves ============================== */
+var MOVES = {
+  start: function (g) { if (g.phase === 'lobby' && g.players.length >= 2) dealRound(g); },
+
+  flipStart: function (g, seat, i) {
+    if (g.phase !== 'flip' || g.handoff || seat < 0) return;
+    var p = g.players[seat];
+    if (upCount(p) >= 2 || p.grid[i].up) return;
+    p.grid[i].up = true;
+    if (upCount(p) < 2) return;
+    var allReady = g.players.every(function (q) { return upCount(q) >= 2; });
+    if (allReady) {
+      beginPlay(g);
+      if (g.mode === 'local') g.handoff = { from: seat, next: g.turn, opening: true };
+    } else if (g.mode === 'local') {
+      var nxt = g.players.findIndex(function (q) { return upCount(q) < 2; });
+      g.handoff = { from: seat, next: nxt, flip: true };
+    }
+  },
+
+  takeDiscard: function (g, seat) {
+    if (g.phase !== 'play' || g.handoff || seat !== g.turn) return;
+    if (g.drawn || g.mustFlip || !g.discard.length) return;
+    g.drawn = { v: g.discard.pop(), src: 'discard' };
+  },
+
+  drawDeck: function (g, seat) {
+    if (g.phase !== 'play' || g.handoff || seat !== g.turn) return;
+    if (g.drawn || g.mustFlip) return;
+    refillDeck(g);
+    if (!g.deck.length) return;
+    g.drawn = { v: g.deck.pop(), src: 'deck' };
+  },
+
+  dump: function (g, seat) {
+    if (g.phase !== 'play' || g.handoff || seat !== g.turn) return;
+    if (!g.drawn || g.drawn.src !== 'deck') return;
+    var p = g.players[seat];
+    var anyDown = p.grid.some(function (c) { return !c.up && !c.gone; });
+    if (!anyDown) return;
+    g.discard.push(g.drawn.v);
+    g.drawn = null;
+    g.mustFlip = true;
+  },
+
+  place: function (g, seat, i) {
+    if (g.phase !== 'play' || g.handoff || seat !== g.turn) return;
+    var p = g.players[seat];
+    if (!g.drawn || p.grid[i].gone) return;
+    var out = p.grid[i];
+    var was = out.up ? 'a ' + out.v : 'a face-down card';
+    note(g, p.name + ' put a ' + g.drawn.v + ' in place of ' + was + '.');
+    g.discard.push(out.v);
+    p.grid[i] = { v: g.drawn.v, up: true, gone: false };
+    g.drawn = null;
+    if (clearColumns(p, g.discard)) note(g, p.name + ' cleared a whole column.');
+    endTurn(g);
+  },
+
+  flipOne: function (g, seat, i) {
+    if (g.phase !== 'play' || g.handoff || seat !== g.turn) return;
+    var p = g.players[seat];
+    if (!g.mustFlip || p.grid[i].up || p.grid[i].gone) return;
+    p.grid[i].up = true;
+    g.mustFlip = false;
+    note(g, p.name + ' turned over a ' + p.grid[i].v + '.');
+    if (clearColumns(p, g.discard)) note(g, p.name + ' cleared a whole column.');
+    endTurn(g);
+  },
+
+  pass: function (g) { g.handoff = null; },
+
+  skip: function (g) {
+    if (g.phase !== 'play') return;
+    var p = g.players[g.turn];
+    if (g.drawn) { g.discard.push(g.drawn.v); g.drawn = null; }
+    if (g.mustFlip) {
+      var i = p.grid.findIndex(function (c) { return !c.up && !c.gone; });
+      if (i >= 0) p.grid[i].up = true;
+      g.mustFlip = false;
+      clearColumns(p, g.discard);
+    }
+    note(g, p.name + "'s turn was skipped.");
+    endTurn(g);
+  },
+
+  nextRound: function (g) { if (g.phase !== 'tally') return; g.round += 1; dealRound(g); },
+
+  again: function (g) {
+    if (g.phase !== 'over') return;
+    g.round = 1;
+    g.players.forEach(function (p) { p.total = 0; });
+    dealRound(g);
+  }
+};
+
+/* ============================== app state ============================== */
+var app = {
+  screen: 'home',
+  mode: null,          /* 'local' | 'online' */
+  isHost: false,
+  myId: store.get('skyjo:id') || (function () { var i = rid(); store.set('skyjo:id', i); return i; })(),
+  name: store.get('skyjo:name') || '',
+  code: '',
+  joinCode: '',
+  localNames: ['', ''],
+  G: null,
+  peer: null,
+  conns: [],           /* host: list of DataConnection */
+  host: null,          /* guest: DataConnection to host */
+  net: 'idle',         /* idle | connecting | live | lost */
+  msg: '',
+  busy: false
+};
+
+function newPlayer(id, nm) {
+  return { id: id, name: String(nm || 'Player').slice(0, 12) || 'Player', grid: [], total: 0, roundScore: null, doubled: false, off: false };
+}
+function seatOf(id) {
+  if (!app.G) return -1;
+  return app.G.players.findIndex(function (p) { return p.id === id; });
+}
+function mySeat() {
+  var g = app.G;
+  if (!g || g.phase === 'lobby') return -1;
+  if (app.mode === 'local') {
+    if (g.handoff) return g.handoff.from;
+    if (g.phase === 'flip') return g.players.findIndex(function (p) { return upCount(p) < 2; });
+    return g.turn;
+  }
+  return seatOf(app.myId);
+}
+
+/* ============================== networking ============================== */
+var CDNS = [
+  'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',
+  'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js'
+];
+function loadPeer() {
+  return new Promise(function (res, rej) {
+    if (window.Peer) return res();
+    var i = 0;
+    function tryNext() {
+      if (i >= CDNS.length) return rej(new Error('Could not load the networking library. Check your connection.'));
+      var s = document.createElement('script');
+      s.src = CDNS[i++];
+      s.onload = function () { res(); };
+      s.onerror = function () { tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  });
+}
+function broadcast() {
+  if (!app.isHost) return;
+  app.G.ts = Date.now();
+  var payload = { t: 'state', G: app.G };
+  app.conns.forEach(function (c) { if (c && c.open) { try { c.send(payload); } catch (e) { /* dropped */ } } });
+}
+function hostMsg(conn, m) {
+  var g = app.G;
+  if (!m || !m.t) return;
+  if (m.t === 'hello') {
+    var at = seatOf(m.id);
+    if (at >= 0) { g.players[at].off = false; }
+    else if (g.phase === 'lobby' && g.players.length < 8) { g.players.push(newPlayer(m.id, m.name)); }
+    else { try { conn.send({ t: 'nope', why: g.phase === 'lobby' ? 'That room is full.' : 'That game already started.' }); } catch (e) { } return; }
+    conn.playerId = m.id;
+    broadcast(); render();
+    return;
+  }
+  if (m.t === 'move') {
+    var seat = seatOf(m.id);
+    if (m.m === 'skip') {
+      var cur = g.players[g.turn];
+      var idle = Date.now() - (g.ts || 0) > 45000;
+      if (!cur.off && !idle) return;
+    } else if (m.m === 'start' || m.m === 'nextRound' || m.m === 'again') {
+      return; /* host-only controls */
+    }
+    if (MOVES[m.m]) { MOVES[m.m](g, seat, m.a); broadcast(); render(); }
+  }
+}
+function startHost(code) {
+  var peer = new Peer('skyjo-' + code, { debug: 0 });
+  app.peer = peer;
+  peer.on('open', function () {
+    app.net = 'live';
+    app.code = code;
+    app.isHost = true;
+    app.mode = 'online';
+    app.G = {
+      mode: 'online', code: code, round: 1, phase: 'lobby',
+      players: [newPlayer(app.myId, app.name)],
+      deck: [], discard: [], turn: 0, drawn: null, mustFlip: false,
+      ender: null, handoff: null, log: [], ts: Date.now()
+    };
+    app.busy = false; app.screen = 'game'; render();
+  });
+  peer.on('connection', function (conn) {
+    conn.on('open', function () { app.conns.push(conn); });
+    conn.on('data', function (m) { hostMsg(conn, m); });
+    conn.on('close', function () {
+      app.conns = app.conns.filter(function (c) { return c !== conn; });
+      var at = seatOf(conn.playerId);
+      if (at >= 0 && app.G) { app.G.players[at].off = true; broadcast(); render(); }
+    });
+    conn.on('error', function () { });
+  });
+  peer.on('error', function (e) {
+    if (e && e.type === 'unavailable-id') { try { peer.destroy(); } catch (x) { } startHost(makeCode()); return; }
+    app.busy = false;
+    app.msg = 'Could not open a room (' + ((e && e.type) || 'network error') + '). Try again.';
+    app.net = 'lost'; render();
+  });
+  peer.on('disconnected', function () { app.net = 'lost'; render(); try { peer.reconnect(); } catch (x) { } });
+}
+function startGuest(code) {
+  var peer = new Peer(null, { debug: 0 });
+  app.peer = peer;
+  app.net = 'connecting';
+  peer.on('open', function () {
+    var conn = peer.connect('skyjo-' + code, { reliable: true });
+    app.host = conn;
+    conn.on('open', function () {
+      app.net = 'live'; app.busy = false; app.code = code;
+      app.mode = 'online'; app.isHost = false; app.screen = 'game';
+      conn.send({ t: 'hello', id: app.myId, name: app.name });
+      render();
+    });
+    conn.on('data', function (m) {
+      if (m && m.t === 'state') { app.G = m.G; app.net = 'live'; render(); }
+      if (m && m.t === 'nope') { app.busy = false; app.msg = m.why; app.screen = 'join'; render(); }
+    });
+    conn.on('close', function () { app.net = 'lost'; render(); });
+    conn.on('error', function () { app.net = 'lost'; render(); });
+    setTimeout(function () {
+      if (app.net !== 'live') {
+        app.busy = false; app.net = 'idle'; app.screen = 'join';
+        app.msg = 'No answer from room ' + code + '. Check the code, and make sure the host still has the page open.';
+        render();
+      }
+    }, 14000);
+  });
+  peer.on('error', function (e) {
+    app.busy = false; app.net = 'idle';
+    app.msg = 'Could not connect (' + ((e && e.type) || 'network error') + '). Check the code and try again.';
+    app.screen = 'join'; render();
+  });
+}
+
+/* ============================== act ============================== */
+function act(m, a) {
+  var g = app.G;
+  if (!g) return;
+  if (app.mode === 'local') {
+    MOVES[m](g, mySeat(), a);
+    render();
+    return;
+  }
+  if (app.isHost) {
+    MOVES[m](g, seatOf(app.myId), a);
+    broadcast(); render();
+    return;
+  }
+  if (app.host && app.host.open) {
+    try { app.host.send({ t: 'move', id: app.myId, m: m, a: a }); } catch (e) { app.net = 'lost'; render(); }
+  }
+}
+
+/* ============================== views ============================== */
+function cardCls(v) {
+  if (v < 0) return 'c-neg';
+  if (v === 0) return 'c-zero';
+  if (v <= 4) return 'c-low';
+  if (v <= 8) return 'c-mid';
+  return 'c-high';
+}
+function cardHTML(c, i, live) {
+  if (c.gone) return '<div class="card slot"></div>';
+  var attrs = live ? ' data-act="cell" data-i="' + i + '"' : ' disabled';
+  var hot = live ? ' live' : '';
+  if (!c.up) return '<button class="card back' + hot + '"' + attrs + '><span>&#9670;</span></button>';
+  return '<button class="card up ' + cardCls(c.v) + hot + '"' + attrs + '>' + c.v + '</button>';
+}
+function boardHTML(grid, liveFn) {
+  var out = '';
+  for (var i = 0; i < grid.length; i++) out += cardHTML(grid[i], i, liveFn ? liveFn(i) : false);
+  return '<div class="board">' + out + '</div>';
+}
+function seatHeadHTML(p, hot, you) {
+  return '<div class="seathd"><span class="nm' + (hot ? ' up' : '') + '">' + esc(p.name) +
+    (you ? ' (you)' : '') + (p.off ? ' &middot; away' : '') + '</span>' +
+    '<span class="sc">' + p.total + '</span></div>';
+}
+
+var MARK = [['S', 'c-neg'], ['K', 'c-zero'], ['Y', 'c-low'], ['J', 'c-mid'], ['O', 'c-high']];
+
+function viewHome() {
+  var m = MARK.map(function (x) { return '<b class="' + x[1] + '">' + x[0] + '</b>'; }).join('');
+  return '<div class="mark">' + m + '</div>' +
+    '<p class="sub">Collect the lowest score. Play across phones with a room code, or pass one phone around the table.</p>' +
+    '<div class="lbl">Your name</div>' +
+    '<input class="fld" data-field="name" maxlength="12" placeholder="e.g. Rishabh" value="' + esc(app.name) + '">' +
+    '<div style="height:13px"></div>' +
+    '<button class="btn" data-act="goOnline">Start a new game</button>' +
+    '<button class="btn quiet" data-act="goJoin">Join with a code</button>' +
+    '<button class="btn ghost" data-act="goLocal">Play on one device</button>' +
+    (app.msg ? '<p class="err">' + esc(app.msg) + '</p>' : '') +
+    '<details><summary>+ How it works</summary><ol>' +
+    '<li>You get 12 cards face down in a 4&times;3 grid. Flip any two to start.</li>' +
+    '<li>On your turn, take the top discard and swap it into your grid — or draw from the deck and either swap it in or throw it away and flip one card over.</li>' +
+    '<li>A card taken off the discard pile must be used. A card drawn from the deck can be thrown away.</li>' +
+    '<li>Three matching cards in one column vanish and count nothing.</li>' +
+    '<li>When someone turns over their last card, everyone else takes one more turn.</li>' +
+    '<li>Lowest round score wins. If the person who went out isn\u2019t lowest on their own, their round score doubles.</li>' +
+    '<li>Once anyone crosses 100 points, the game ends and the lowest total wins.</li>' +
+    '</ol></details>';
+}
+function viewOnline() {
+  return '<div class="hd"><button class="back" data-act="home">&larr;</button><h1>New game</h1></div>' +
+    '<p style="color:var(--dim);font-size:14px;margin-top:0">You\u2019ll get a 4-character code. Anyone who opens this page and types it joins your table. Keep this tab open — the game runs through your device.</p>' +
+    '<div class="lbl">Your name</div>' +
+    '<input class="fld" data-field="name" maxlength="12" placeholder="Your name" value="' + esc(app.name) + '">' +
+    '<div style="height:9px"></div>' +
+    '<button class="btn" data-act="create"' + (app.busy ? ' disabled' : '') + '>' +
+    (app.busy ? 'Opening the room\u2026' : 'Create the room') + '</button>' +
+    (app.msg ? '<p class="err">' + esc(app.msg) + '</p>' : '') +
+    '<p class="fine">Connections are peer-to-peer between the players\u2019 browsers. Nothing is stored on a server.</p>';
+}
+function viewJoin() {
+  return '<div class="hd"><button class="back" data-act="home">&larr;</button><h1>Join a game</h1></div>' +
+    '<div class="lbl">Room code</div>' +
+    '<input class="fld code" data-field="joinCode" maxlength="4" placeholder="XXXX" value="' + esc(app.joinCode) + '">' +
+    '<div style="height:7px"></div><div class="lbl">Your name</div>' +
+    '<input class="fld" data-field="name" maxlength="12" placeholder="Your name" value="' + esc(app.name) + '">' +
+    '<div style="height:9px"></div>' +
+    '<button class="btn" data-act="join"' + (app.busy ? ' disabled' : '') + '>' +
+    (app.busy ? 'Connecting\u2026' : 'Join the table') + '</button>' +
+    (app.msg ? '<p class="err">' + esc(app.msg) + '</p>' : '');
+}
+function viewLocal() {
+  var f = app.localNames.map(function (n, i) {
+    return '<input class="fld" data-field="local" data-i="' + i + '" maxlength="12" placeholder="Player ' + (i + 1) + '" value="' + esc(n) + '">';
+  }).join('');
+  return '<div class="hd"><button class="back" data-act="home">&larr;</button><h1>One device</h1></div>' +
+    '<p style="color:var(--dim);font-size:14px;margin-top:0">Everyone plays on this screen. After each move the game pauses, shows what just happened, and only switches boards when the next person taps to take over.</p>' +
+    f + '<div class="row" style="margin:4px 0 16px">' +
+    (app.localNames.length < 8 ? '<button class="btn quiet sm" data-act="addLocal">Add a player</button>' : '') +
+    (app.localNames.length > 2 ? '<button class="btn ghost sm" data-act="delLocal">Remove</button>' : '') +
+    '</div><button class="btn" data-act="startLocal">Deal</button>';
+}
+function topHTML() {
+  var g = app.G;
+  var netHTML = '';
+  if (app.mode === 'online') {
+    var on = app.net === 'live';
+    netHTML = '<span><span class="dot ' + (on ? 'on' : 'off') + '"></span> ' +
+      '<span class="meta">' + (on ? 'LIVE' : 'RECONNECTING') + '</span></span>';
+  }
+  var bar = '';
+  if (g.phase === 'play') {
+    var w = 100 / g.players.length;
+    bar = '<i style="width:' + w + '%;margin-left:' + (w * g.turn) + '%"></i>';
+  }
+  return '<div class="top"><div class="topin"><div class="brand">' +
+    '<span>SKYJO</span><span class="meta">' + (app.mode === 'online' ? esc(g.code) : 'TABLE') +
+    ' &middot; R' + g.round + '</span>' + netHTML + '</div>' +
+    '<button class="leave" data-act="home">LEAVE</button></div>' +
+    '<div class="bar">' + bar + '</div></div>';
+}
+function viewLobby() {
+  var g = app.G;
+  var list = g.players.map(function (p, i) {
+    return '<div class="pl"><span class="nm">' + esc(p.name) + '</span>' +
+      (i === 0 ? '<span class="tg">HOST</span>' : '') + '</div>';
+  }).join('');
+  var btn = app.isHost
+    ? '<button class="btn" data-act="start"' + (g.players.length < 2 ? ' disabled' : '') + '>' +
+      (g.players.length < 2 ? 'Waiting for one more player' : 'Deal for ' + g.players.length) + '</button>'
+    : '<div class="wait pulse">Waiting for the host to deal\u2026</div>';
+  return topHTML() +
+    '<div style="padding:32px 0 8px"><div class="lbl" style="text-align:center">Share this code</div>' +
+    '<div class="code">' + esc(g.code) + '</div></div>' +
+    '<p style="color:var(--dim);font-size:12.5px;text-align:center;margin:4px 0 24px">' +
+    'Send everyone this page\u2019s link. They open it, tap <span style="color:var(--bone)">Join with a code</span>, and type ' + esc(g.code) + '.</p>' +
+    '<div class="lbl">Players (' + g.players.length + ')</div>' +
+    '<div class="plist">' + list + '</div>' + btn;
+}
+function viewTally() {
+  var g = app.G, done = g.phase === 'over';
+  var sorted = g.players.map(function (p, i) { var q = clone(p); q.i = i; return q; })
+    .sort(function (a, b) { return a.total - b.total; });
+  var rows = sorted.map(function (p, r) {
+    var tag = '';
+    if (p.doubled) tag = '<span class="tag x2">doubled</span>';
+    else if (g.ender === p.i) tag = '<span class="tag">went out</span>';
+    var d = p.roundScore > 0 ? '+' + p.roundScore : p.roundScore;
+    return '<div class="line' + (r === 0 ? ' first' : '') + '"><span class="rk">' + (r + 1) + '</span>' +
+      '<span class="nm">' + esc(p.name) + tag + '</span>' +
+      '<span class="d">' + d + '</span><span class="t">' + p.total + '</span></div>';
+  }).join('');
+  var canDeal = app.mode === 'local' || app.isHost;
+  var btn = canDeal
+    ? '<button class="btn" data-act="' + (done ? 'again' : 'nextRound') + '">' +
+      (done ? 'Play again' : 'Deal the next round') + '</button>'
+    : '<div class="wait pulse">Waiting for the host\u2026</div>';
+  return topHTML() + '<div class="tally"><div class="top2">' +
+    '<div class="lbl">' + (done ? 'Final' : 'Round ' + g.round) + '</div>' +
+    '<div class="win">' + (done ? esc(sorted[0].name) + ' wins' : 'Round over') + '</div></div>' +
+    rows + '<div style="height:16px"></div>' + btn + '</div>';
+}
+function viewGame() {
+  var g = app.G;
+  if (!g) return '';
+  if (g.phase === 'lobby') return viewLobby();
+  if (g.phase === 'tally' || g.phase === 'over') return viewTally();
+
+  var seat = mySeat();
+  var me = seat >= 0 ? g.players[seat] : null;
+  var held = !!g.handoff;
+  var myTurn = g.phase === 'play' && seat === g.turn && !held;
+  var flipping = g.phase === 'flip' && seat >= 0 && upCount(g.players[seat]) < 2 && !held;
+  var active = g.players[g.turn];
+  var top = g.discard.length ? g.discard[g.discard.length - 1] : null;
+  var html = topHTML();
+
+  /* status or handoff */
+  if (held) {
+    var from = g.players[g.handoff.from], next = g.players[g.handoff.next];
+    var same = g.handoff.from === g.handoff.next;
+    var heading = g.handoff.opening ? esc(next.name) + ' has the highest pair'
+      : (g.handoff.flip ? esc(from.name) + ' is set' : esc(from.name) + '\u2019s turn is done');
+    var btnTxt = same ? esc(next.name) + ', you\u2019re up \u2192' : 'Pass to ' + esc(next.name) + ' \u2192';
+    var hint = same ? 'Tap when you\u2019re ready' : esc(next.name) + ' taps this once they have the phone';
+    html += '<div class="panel hot"><div class="ttl">' + heading + '</div>' +
+      (g.log[0] ? '<div>' + esc(g.log[0]) + '</div>' : '') +
+      '<button class="btn" data-act="pass">' + btnTxt + '</button>' +
+      '<div class="hint">' + hint + '</div></div>';
+  } else {
+    var prompt;
+    if (g.phase === 'flip') prompt = flipping ? esc(me.name) + ' \u2014 flip any two' : 'Waiting on the others';
+    else if (!myTurn) prompt = esc(active.name) + ' is playing';
+    else if (g.drawn) prompt = g.drawn.src === 'deck' ? 'Swap it in, or throw it away' : 'Swap it into your grid';
+    else if (g.mustFlip) prompt = 'Turn one of your cards over';
+    else prompt = 'Take the discard, or draw';
+    var go = myTurn || flipping;
+    html += '<div class="status"><div class="what' + (go ? ' go' : ' pulse') + '">' + prompt + '</div>' +
+      (g.log[0] ? '<div class="last">' + esc(g.log[0]) + '</div>' : '') + '</div>';
+  }
+
+  /* piles */
+  var canDraw = myTurn && !g.drawn && !g.mustFlip;
+  var canTake = canDraw && top !== null;
+  var deckBtn = '<button class="card back' + (canDraw ? ' live' : '') + '"' +
+    (canDraw ? ' data-act="drawDeck"' : ' disabled') + '><span>&#9670;</span></button>';
+  var handHTML = g.drawn
+    ? '<button class="card up ' + cardCls(g.drawn.v) + '" disabled>' + g.drawn.v + '</button><div class="cap hot">IN HAND</div>'
+    : '<div class="empty"></div>';
+  var discHTML = top !== null
+    ? '<button class="card up ' + cardCls(top) + (canTake ? ' live' : '') + '"' +
+      (canTake ? ' data-act="takeDiscard"' : ' disabled') + '>' + top + '</button>'
+    : '<div class="empty"></div>';
+  html += '<div class="piles">' +
+    '<div class="pile">' + deckBtn + '<div class="cap">DECK ' + g.deck.length + '</div></div>' +
+    '<div class="pile">' + handHTML + '</div>' +
+    '<div class="pile">' + discHTML + '<div class="cap">DISCARD</div></div></div>';
+
+  /* choice panel */
+  if (myTurn && g.drawn) {
+    var lead = g.drawn.src === 'deck' ? 'You drew a ' : 'You took the ';
+    var tail = g.drawn.src === 'deck' ? ' \u2014' : '.';
+    html += '<div class="panel"><div>' + lead + '<em>' + g.drawn.v + '</em>. Tap any card in your grid to swap it in' + tail + '</div>' +
+      (g.drawn.src === 'deck'
+        ? '<button class="btn quiet" data-act="dump">Or throw it away and flip a card</button>'
+        : '<div class="why">A card off the discard pile has to be used — you can\u2019t throw it back.</div>') +
+      '</div>';
+  }
+  if (myTurn && g.mustFlip) {
+    html += '<div class="panel hot">Thrown away. Now tap any face-down card to turn it over.</div>';
+  }
+
+  /* my board */
+  if (me) {
+    var liveFn = function (i) {
+      if (held) return false;
+      if (g.phase === 'flip') return flipping && !me.grid[i].up;
+      if (!myTurn) return false;
+      if (g.drawn) return !me.grid[i].gone;
+      if (g.mustFlip) return !me.grid[i].up && !me.grid[i].gone;
+      return false;
+    };
+    html += '<div class="seat">' + seatHeadHTML(me, !held && g.turn === seat && g.phase === 'play', app.mode === 'online') +
+      boardHTML(me.grid, liveFn) + '</div>';
+  }
+
+  /* stalled */
+  if (app.mode === 'online' && g.phase === 'play' && !myTurn) {
+    var idle = Date.now() - (g.ts || 0) > 45000;
+    if (active.off || idle) {
+      html += '<div style="margin-top:16px"><button class="btn ghost" data-act="skip">' +
+        esc(active.name) + ' has dropped out of sight — skip their turn</button></div>';
+    }
+  }
+
+  /* others */
+  var others = g.players.filter(function (p, i) { return i !== seat; });
+  if (others.length) {
+    var rail = others.map(function (p) {
+      var i = g.players.indexOf(p);
+      var hot = !held && g.turn === i && g.phase === 'play';
+      return '<div class="mini' + (hot ? ' up' : '') + '">' + seatHeadHTML(p, hot, false) + boardHTML(p.grid, null) + '</div>';
+    }).join('');
+    html += '<div style="margin-top:26px"><div class="lbl">At the table</div><div class="rail">' + rail + '</div></div>';
+  }
+
+  if (g.log.length > 1) {
+    html += '<div class="hist"><div class="lbl">Earlier</div>' +
+      g.log.slice(1, 5).map(function (l) { return '<div>' + esc(l) + '</div>'; }).join('') + '</div>';
+  }
+  return html;
+}
+
+/* ============================== render + events ============================== */
+var rootEl;
+function render() {
+  var html;
+  try {
+    if (app.screen === 'home') html = viewHome();
+    else if (app.screen === 'online') html = viewOnline();
+    else if (app.screen === 'join') html = viewJoin();
+    else if (app.screen === 'local') html = viewLocal();
+    else html = viewGame();
+  } catch (e) {
+    html = '<div class="hd"><h1>The table tipped over</h1></div>' +
+      '<p style="color:var(--dim);font-size:13.5px">Something broke. The message below says what:</p>' +
+      '<div style="font-family:var(--mono);font-size:12px;background:var(--panel);padding:12px;' +
+      'border-radius:9px;word-break:break-word">' + esc(e && e.message ? e.message : e) + '</div>' +
+      '<div style="height:14px"></div><button class="btn" data-act="home">Back to the start</button>';
+  }
+  rootEl.innerHTML = html;
+}
+
+function cleanup() {
+  try { if (app.peer) app.peer.destroy(); } catch (e) { }
+  app.peer = null; app.conns = []; app.host = null; app.net = 'idle';
+}
+
+var ACTS = {
+  home: function () { cleanup(); app.screen = 'home'; app.mode = null; app.G = null; app.msg = ''; app.busy = false; },
+  goOnline: function () { app.msg = ''; app.screen = 'online'; },
+  goJoin: function () { app.msg = ''; app.screen = 'join'; },
+  goLocal: function () { app.msg = ''; app.screen = 'local'; },
+
+  create: function () {
+    if (!app.name.trim()) { app.msg = 'Enter a name first.'; return; }
+    app.busy = true; app.msg = '';
+    loadPeer().then(function () { startHost(makeCode()); })
+      .catch(function (e) { app.busy = false; app.msg = e.message; render(); });
+  },
+  join: function () {
+    var c = app.joinCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+    if (c.length !== 4) { app.msg = 'Room codes are 4 characters.'; return; }
+    if (!app.name.trim()) { app.msg = 'Enter a name first.'; return; }
+    app.busy = true; app.msg = '';
+    loadPeer().then(function () { startGuest(c); })
+      .catch(function (e) { app.busy = false; app.msg = e.message; render(); });
+  },
+
+  addLocal: function () { if (app.localNames.length < 8) app.localNames.push(''); },
+  delLocal: function () { if (app.localNames.length > 2) app.localNames.pop(); },
+  startLocal: function () {
+    var names = app.localNames.map(function (n, i) { return n.trim() || 'Player ' + (i + 1); });
+    app.mode = 'local'; app.isHost = true;
+    app.G = {
+      mode: 'local', code: 'LOCAL', round: 1, phase: 'lobby',
+      players: names.map(function (n, i) { return newPlayer('L' + i, n); }),
+      deck: [], discard: [], turn: 0, drawn: null, mustFlip: false,
+      ender: null, handoff: null, log: [], ts: Date.now()
+    };
+    dealRound(app.G);
+    app.screen = 'game';
+  },
+
+  start: function () { if (app.isHost || app.mode === 'local') { MOVES.start(app.G); broadcast(); } },
+  nextRound: function () { if (app.isHost || app.mode === 'local') { MOVES.nextRound(app.G); broadcast(); } },
+  again: function () { if (app.isHost || app.mode === 'local') { MOVES.again(app.G); broadcast(); } },
+  pass: function () { act('pass'); },
+  skip: function () { act('skip'); },
+  drawDeck: function () { act('drawDeck'); },
+  takeDiscard: function () { act('takeDiscard'); },
+  dump: function () { act('dump'); },
+  cell: function (i) {
+    var g = app.G;
+    if (!g || g.handoff) return;
+    if (g.phase === 'flip') return act('flipStart', i);
+    if (g.drawn) return act('place', i);
+    if (g.mustFlip) return act('flipOne', i);
+  }
+};
+
+function boot() {
+  rootEl = document.getElementById('app');
+  rootEl.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-act]');
+    if (!el || el.disabled) return;
+    var fn = ACTS[el.getAttribute('data-act')];
+    if (!fn) return;
+    var i = el.getAttribute('data-i');
+    fn(i === null ? undefined : parseInt(i, 10));
+    render();
+  });
+  rootEl.addEventListener('input', function (e) {
+    var el = e.target;
+    var f = el.getAttribute('data-field');
+    if (!f) return;
+    if (f === 'name') { app.name = el.value; store.set('skyjo:name', el.value); }
+    else if (f === 'joinCode') { app.joinCode = el.value.toUpperCase(); }
+    else if (f === 'local') { app.localNames[parseInt(el.getAttribute('data-i'), 10)] = el.value; }
+  });
+  window.addEventListener('beforeunload', function () { cleanup(); });
+  setInterval(function () {
+    if (app.screen === 'game' && app.mode === 'online' && app.G && app.G.phase === 'play') render();
+  }, 5000);
+  render();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+</script>
+</body>
+</html>
