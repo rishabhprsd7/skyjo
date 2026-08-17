@@ -190,8 +190,13 @@ p{line-height:1.6}
 .line.first{background:var(--panelHi);border-color:var(--brass)}
 .line .rk{font-family:var(--mono);font-size:11px;color:var(--dim);width:14px}
 .line .nm{flex:1;font-weight:600;font-size:14px}
-.line .tag{font-size:11px;margin-left:7px;color:var(--dim)}
-.line .tag.x2{color:var(--red)}
+.tag{font-size:11px;margin-left:7px;color:var(--dim);white-space:nowrap}
+.tag.x2{color:var(--red)}
+.sc i{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;color:var(--rule);
+  font-style:normal;margin:0 3px 0 7px}
+.sc b{font-weight:700}
+.legend{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;color:var(--rule)}
+.dbl{font-family:var(--mono);font-size:11px;color:var(--red);margin-top:3px}
 .line .d{font-family:var(--mono);font-size:12px;color:var(--dim);width:42px;text-align:right}
 .line .t{font-family:var(--mono);font-size:17px;font-weight:700;width:42px;text-align:right}
 
@@ -216,7 +221,7 @@ details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;ma
 <script>
 "use strict";
 
-var BUILD = "build 11 \u00b7 16 Aug";
+var BUILD = "build 12 \u00b7 16 Aug";
 
 /* ===================== tiny storage (safe if blocked) ===================== */
 var mem = {};
@@ -320,7 +325,7 @@ function scoreRound(g) {
     var sole = scores[e] === min && ties === 1;
     if (!sole && scores[e] > 0) { scores[e] = scores[e] * 2; g.players[e].doubled = true; }
   }
-  g.players.forEach(function (p, i) { p.roundScore = scores[i]; p.total += scores[i]; });
+  g.players.forEach(function (p, i) { p.rawRound = rawScore(p); p.roundScore = scores[i]; p.total += scores[i]; });
   g.handoff = null;
   g.phase = g.players.some(function (p) { return p.total >= 100; }) ? 'over' : 'tally';
 }
@@ -842,11 +847,13 @@ function boardHTML(grid, liveFn, hideFn) {
   }
   return '<div class="board">' + out + '</div>';
 }
-function seatHeadHTML(p, hot, you) {
+function seatHeadHTML(p, hot, you, compact) {
+  var sc = compact
+    ? '<span class="sc"><b>' + upSum(p) + '</b> &middot; <b>' + p.total + '</b></span>'
+    : '<span class="sc"><i>ROUND</i><b>' + upSum(p) + '</b><i>TOTAL</i><b>' + p.total + '</b></span>';
   return '<div class="seathd"><span class="nm' + (hot ? ' up' : '') + '">' + esc(p.name) +
     (you ? ' (you)' : '') + (p.off ? ' &middot; away' : '') +
-    (hot ? '<span class="now">NOW</span>' : '') + '</span>' +
-    '<span class="sc">' + p.total + '</span></div>';
+    (hot ? '<span class="now">NOW</span>' : '') + '</span>' + sc + '</div>';
 }
 
 var MARK = [['S', 'c-neg'], ['K', 'c-zero'], ['Y', 'c-low'], ['J', 'c-mid'], ['O', 'c-high']];
@@ -1054,18 +1061,25 @@ function viewReveal() {
   var g = app.G;
   var rows = g.players.map(function (p, i) {
     var tags = '';
-    if (g.ender === i) tags += '<span class="tag">went out</span>';
-    if (p.doubled) tags += '<span class="tag x2">doubled</span>';
-    var d = p.roundScore > 0 ? '+' + p.roundScore : p.roundScore;
+    if (g.ender === i) tags += '<span class="tag">&middot; went out</span>';
+    if (p.doubled) tags += '<span class="tag x2">&middot; doubled</span>';
+    var d = p.roundScore > 0 ? '+' + p.roundScore : '' + p.roundScore;
+    var sums = p.doubled
+      ? '<div class="dbl">cards add up to ' + p.rawRound + ', doubled to ' + p.roundScore + '</div>'
+      : '';
     return '<div class="revrow"><div class="seathd"><span class="nm">' + esc(p.name) + tags + '</span>' +
-      '<span class="sc" style="color:var(--bone);font-size:15px;font-weight:700">' + d + '</span></div>' +
+      '<span class="sc"><i>ROUND</i><b style="font-size:15px">' + d + '</b>' +
+      '<i>TOTAL</i><b style="font-size:15px">' + p.total + '</b></span></div>' + sums +
       '<div class="mid">' + boardHTML(p.grid, null) + '</div></div>';
   }).join('');
   return topHTML() +
     '<div style="text-align:center;padding:20px 0 16px">' +
     '<div class="lbl">' + (g.phase === 'over' ? 'Last round' : 'Round ' + g.round) + '</div>' +
     '<div class="win">Everyone turns over</div>' +
-    '<p style="color:var(--dim);font-size:12.5px;margin:8px 0 0">Dashed gaps are cleared columns \u2014 they count nothing.</p></div>' +
+    '<p style="color:var(--dim);font-size:12.5px;margin:8px 0 0">Dashed gaps are cleared columns \u2014 they count nothing.' +
+    (g.players.some(function (x) { return x.doubled; })
+      ? '<br>Whoever ends a round without the lowest score has it doubled.' : '') +
+    '</p></div>' +
     rows +
     '<button class="btn" data-act="showScores">See the scores</button>';
 }
@@ -1075,9 +1089,9 @@ function viewTally() {
     .sort(function (a, b) { return a.total - b.total; });
   var rows = sorted.map(function (p, r) {
     var tag = '';
-    if (p.doubled) tag = '<span class="tag x2">doubled</span>';
-    else if (g.ender === p.i) tag = '<span class="tag">went out</span>';
-    var d = p.roundScore > 0 ? '+' + p.roundScore : p.roundScore;
+    if (p.doubled) tag = '<span class="tag x2">&middot; ' + p.rawRound + '&times;2</span>';
+    else if (g.ender === p.i) tag = '<span class="tag">&middot; went out</span>';
+    var d = p.roundScore > 0 ? '+' + p.roundScore : '' + p.roundScore;
     return '<div class="line' + (r === 0 ? ' first' : '') + '"><span class="rk">' + (r + 1) + '</span>' +
       '<span class="nm">' + esc(p.name) + tag + '</span>' +
       '<span class="d">' + d + '</span><span class="t">' + p.total + '</span></div>';
@@ -1091,6 +1105,9 @@ function viewTally() {
   return topHTML() + '<div class="tally"><div class="top2">' +
     '<div class="lbl">' + (done ? 'Final' : 'Round ' + g.round) + '</div>' +
     '<div class="win">' + (done ? esc(sorted[0].name) + ' wins' : 'Round over') + '</div></div>' +
+    '<div class="line" style="background:none;padding:0 14px 4px">' +
+    '<span class="rk"></span><span class="nm"></span>' +
+    '<span class="d legend">ROUND</span><span class="t legend">TOTAL</span></div>' +
     rows + '<div style="height:16px"></div>' + btn + back + '</div>';
 }
 function viewGame() {
@@ -1235,9 +1252,12 @@ function viewGame() {
     var rail = others.map(function (p) {
       var i = g.players.indexOf(p);
       var hot = !held && g.turn === i && g.phase === 'play';
-      return '<div class="mini' + (hot ? ' up' : '') + '">' + seatHeadHTML(p, hot, false) + boardHTML(p.grid, null) + '</div>';
+      return '<div class="mini' + (hot ? ' up' : '') + '">' + seatHeadHTML(p, hot, false, true) + boardHTML(p.grid, null) + '</div>';
     }).join('');
-    html += '<div style="margin-top:26px"><div class="lbl">At the table</div><div class="rail">' + rail + '</div></div>';
+    html += '<div style="margin-top:26px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline">' +
+      '<div class="lbl">At the table</div><div class="legend">ROUND &middot; TOTAL</div></div>' +
+      '<div class="rail">' + rail + '</div></div>';
   }
 
   if (g.log.length > 1) {
