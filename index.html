@@ -207,7 +207,7 @@ details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;ma
 <script>
 "use strict";
 
-var BUILD = "build 9 \u00b7 16 Aug";
+var BUILD = "build 10 \u00b7 16 Aug";
 
 /* ===================== tiny storage (safe if blocked) ===================== */
 var mem = {};
@@ -438,6 +438,7 @@ var app = {
   msg: '',
   busy: false,
   endStage: 'closing',
+  lostAt: 0,
   myLate: {},
   copied: false,
   tallyKey: null,
@@ -517,6 +518,16 @@ function loadSession() {
     return j;
   } catch (e) { return null; }
 }
+function setNet(state) {
+  if (state === app.net) return;
+  app.net = state;
+  if (state === 'live') app.lostAt = 0;
+  else if (!app.lostAt) app.lostAt = Date.now();
+  render();
+}
+function netShaky() {
+  return app.mode === 'online' && app.net !== 'live' && app.lostAt && (Date.now() - app.lostAt) > 6000;
+}
 function publishState() {
   if (!app.mq || app.mode !== 'online' || !app.G) return;
   app.G.ts = Date.now();
@@ -532,10 +543,6 @@ function publishSeat() {
       JSON.stringify({ id: app.myId, name: app.name, at: app.seatAt }),
       { qos: 1, retain: true });
   } catch (e) { }
-}
-function clearSeat() {
-  if (!app.mq || !app.code) return;
-  try { app.mq.publish(tSeat(app.code, app.myId), '', { qos: 1, retain: true }); } catch (e) { }
 }
 function seatList() {
   var out = [];
@@ -580,8 +587,9 @@ function openRoom(code, how) {
 
   client.on('connect', function () {
     clearTimeout(t1);
-    app.net = 'live';
+    setNet('live');
     keepAwake();
+    if (settled) { publishSeat(); }   /* re-assert my seat after a drop */
     client.subscribe([tState(code), tSeatWild(code)], { qos: 1 }, function () {
       /* retained messages land right after this */
       setTimeout(function () {
@@ -631,8 +639,9 @@ function openRoom(code, how) {
     } catch (e) { }
   });
 
-  client.on('reconnect', function () { app.net = 'lost'; render(); });
-  client.on('close', function () { if (app.net === 'live') { app.net = 'lost'; render(); } });
+  client.on('reconnect', function () { setNet('lost'); });
+  client.on('offline', function () { setNet('lost'); });
+  client.on('close', function () { setNet('lost'); });
   client.on('error', function (e) {
     if (settled) { app.net = 'lost'; render(); return; }
     clearTimeout(t1); settled = true;
@@ -645,9 +654,14 @@ function openRoom(code, how) {
 }
 
 function leaveRoom() {
-  try { clearSeat(); } catch (e) { }
-  try { if (app.mq) app.mq.end(true); } catch (e) { }
-  app.mq = null; app.seats = {}; app.net = 'idle';
+  var c = app.mq, code = app.code, id = app.myId;
+  app.mq = null; app.seats = {}; app.net = 'idle'; app.lostAt = 0;
+  if (!c) return;
+  function shut() { try { c.end(true); } catch (e) { } }
+  try {
+    c.publish(tSeat(code, id), '', { qos: 0, retain: true }, shut);
+    setTimeout(shut, 900);
+  } catch (e) { shut(); }
 }
 
 /* ============================== act ============================== */
@@ -785,11 +799,18 @@ function viewNet() {
     (app.msg ? '<p class="err">' + esc(app.msg) + '</p>' : '') +
     '<p class="fine">Anyone who knows your 4-letter code could in principle read the board on a public broker. Fine for a card game; do not treat it as private.</p>';
 }
+function lobbyShell() {
+  return {
+    mode: 'online', code: app.code, round: 1, phase: 'lobby', players: [],
+    deck: [], discard: [], turn: 0, drawn: null, mustFlip: false,
+    ender: null, handoff: null, log: [], ts: Date.now()
+  };
+}
 function topHTML() {
-  var g = app.G;
+  var g = app.G || lobbyShell();
   var netHTML = '';
   if (app.mode === 'online') {
-    var on = app.net === 'live';
+    var on = !netShaky();
     netHTML = '<span><span class="dot ' + (on ? 'on' : 'off') + '"></span> ' +
       '<span class="meta">' + (on ? 'LIVE' : 'RECONNECTING') + '</span></span>';
   }
@@ -808,7 +829,7 @@ function topHTML() {
     '<div class="bar">' + bar + '</div></div>';
 }
 function viewLobby() {
-  var g = app.G;
+  var g = app.G || lobbyShell();
   var src = (g.players && g.players.length) ? g.players : seatList();
   var list = src.map(function (p, i) {
     return '<div class="pl"><span class="nm">' + esc(p.name) + '</span>' +
@@ -925,8 +946,7 @@ function viewTally() {
     rows + '<div style="height:16px"></div>' + btn + back + '</div>';
 }
 function viewGame() {
-  var g = app.G;
-  if (!g) return '';
+  var g = app.G || lobbyShell();
   if (g.phase === 'lobby') return viewLobby();
   if (g.phase === 'tally' || g.phase === 'over') {
     syncTallyView();
@@ -944,7 +964,7 @@ function viewGame() {
   var top = g.discard.length ? g.discard[g.discard.length - 1] : null;
   var html = topHTML();
 
-  if (app.mode === 'online' && app.net !== 'live') {
+  if (netShaky()) {
     html += '<div class="panel hot"><div class="ttl">Connection lost</div>' +
       '<div>You have dropped out of room <b style="color:var(--brass)">' + esc(g.code) + '</b>. ' +
       'Your cards are safe — the host is holding your seat.</div>' +
@@ -1216,8 +1236,8 @@ function boot() {
   });
   window.addEventListener('beforeunload', function () { cleanup(); });
   setInterval(function () {
-    if (app.screen === 'game' && app.mode === 'online' && app.G && app.G.phase === 'play') render();
-  }, 5000);
+    if (app.screen === 'game' && app.mode === 'online') render();
+  }, 2500);
   render();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
