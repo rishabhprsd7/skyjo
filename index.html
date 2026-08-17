@@ -159,6 +159,15 @@ p{line-height:1.6}
 .mini .card.back span{font-size:9px}
 .mini .card.live{box-shadow:none}
 
+.botrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;
+  background:var(--panel);margin-bottom:7px}
+.botrow .pipsm{width:26px;height:26px;border-radius:26px;background:var(--panelHi);
+  color:var(--brass);display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:13px;flex:0 0 auto}
+.botrow .bn{flex:1;font-weight:600;font-size:14px}
+.botrow .lvl{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--brass);background:transparent;
+  border:1px solid var(--brass);border-radius:6px;padding:4px 9px}
 .revrow{margin-bottom:18px}
 .swap{display:flex;align-items:center;justify-content:center;gap:14px;margin:14px 0 4px}
 .swap .leg{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--dim);
@@ -207,7 +216,7 @@ details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;ma
 <script>
 "use strict";
 
-var BUILD = "build 10 \u00b7 16 Aug";
+var BUILD = "build 11 \u00b7 16 Aug";
 
 /* ===================== tiny storage (safe if blocked) ===================== */
 var mem = {};
@@ -281,6 +290,15 @@ function dealRound(g) {
   g.discard = [deck.pop()];
   g.drawn = null; g.mustFlip = false; g.ender = null; g.handoff = null;
   g.turn = 0; g.phase = 'flip';
+  g.players.forEach(function (p) {
+    if (!p.bot) return;
+    var pick = [];
+    while (pick.length < 2) {
+      var i = Math.floor(Math.random() * 12);
+      if (pick.indexOf(i) < 0) pick.push(i);
+    }
+    pick.forEach(function (i) { p.grid[i].up = true; });
+  });
   g.log = ['Round ' + g.round + ' begins.'];
 }
 function beginPlay(g) {
@@ -306,6 +324,14 @@ function scoreRound(g) {
   g.handoff = null;
   g.phase = g.players.some(function (p) { return p.total >= 100; }) ? 'over' : 'tally';
 }
+function setHandoff(g, from, next, extra) {
+  if (g.mode !== 'local') return;
+  var humans = g.players.filter(function (x) { return !x.bot; }).length;
+  if (humans < 2 || g.players[next].bot) return;
+  var h = { from: from, next: next };
+  if (extra) for (var k in extra) h[k] = extra[k];
+  g.handoff = h;
+}
 function endTurn(g) {
   var from = g.turn, p = g.players[from];
   if (g.ender === null && isOut(p)) {
@@ -315,7 +341,108 @@ function endTurn(g) {
   var next = (from + 1) % g.players.length;
   if (g.ender !== null && next === g.ender) { scoreRound(g); return; }
   g.turn = next;
-  if (g.mode === 'local') g.handoff = { from: from, next: next };
+  setHandoff(g, from, next);
+}
+
+/* ============================== the computer player ==============================
+   Heuristic, not a language model: it runs in your browser with no network.
+   Every choice is scored by how many points it expects to remove from its grid. */
+
+var UNKNOWN = 5.07;   /* mean value of an unseen card across the 150-card deck */
+var LEVELS = {
+  easy:   { label: 'Easy',   take: 5.0, keep: 4.0, noise: 4.5, endgame: false },
+  normal: { label: 'Normal', take: 3.2, keep: 2.2, noise: 2.0, endgame: false },
+  hard:   { label: 'Hard',   take: 1.6, keep: 0.7, noise: 0.0, endgame: true }
+};
+var BOT_NAMES = ['Ada', 'Bo', 'Cy', 'Dot', 'Eve', 'Fox', 'Gil', 'Hal'];
+
+function colOf(i) {
+  for (var k = 0; k < COLS.length; k++) if (COLS[k].indexOf(i) >= 0) return COLS[k];
+  return COLS[0];
+}
+function cellVal(c) { return c.up ? c.v : UNKNOWN; }
+function hiddenCount(p) {
+  return p.grid.filter(function (c) { return !c.up && !c.gone; }).length;
+}
+function estScore(p) {
+  return p.grid.reduce(function (s, c) { return c.gone ? s : s + cellVal(c); }, 0);
+}
+/* only end the round when comfortably ahead - going out behind doubles the score */
+function safeToGoOut(g, seat) {
+  var me = estScore(g.players[seat]);
+  for (var i = 0; i < g.players.length; i++) {
+    if (i === seat) continue;
+    if (estScore(g.players[i]) <= me + 5) return false;
+  }
+  return true;
+}
+/* points removed from the grid by putting v into cell idx */
+function placeGain(g, seat, idx, v) {
+  var p = g.players[seat], c = p.grid[idx];
+  if (c.gone) return -999;
+  var col = colOf(idx), twin = true;
+  for (var k = 0; k < col.length; k++) {
+    var o = p.grid[col[k]];
+    if (col[k] === idx) continue;
+    if (o.gone || !o.up || o.v !== v) { twin = false; break; }
+  }
+  /* completing a column wipes all three cells, which is only good when v is high */
+  if (twin) return cellVal(c) + 2 * v;
+  return cellVal(c) - v;
+}
+function bestPlace(g, seat, v, lvl) {
+  var p = g.players[seat], best = null;
+  var risky = lvl.endgame && hiddenCount(p) === 1 && !safeToGoOut(g, seat);
+  for (var i = 0; i < 12; i++) {
+    if (p.grid[i].gone) continue;
+    var gain = placeGain(g, seat, i, v);
+    if (lvl.noise) gain += (Math.random() * 2 - 1) * lvl.noise;
+    if (risky && !p.grid[i].up) gain -= 14;   /* would reveal the last card and end the round */
+    if (!best || gain > best.gain) best = { idx: i, gain: gain };
+  }
+  return best;
+}
+function botLevel(p) { return LEVELS[p.lvl] || LEVELS.normal; }
+
+function botStep(g) {
+  var seat = g.turn, p = g.players[seat], lvl = botLevel(p);
+
+  if (!g.drawn && !g.mustFlip) {
+    var top = g.discard.length ? g.discard[g.discard.length - 1] : null;
+    var d = (top === null) ? null : bestPlace(g, seat, top, lvl);
+    if (d && d.gain >= lvl.take) MOVES.takeDiscard(g, seat);
+    else MOVES.drawDeck(g, seat);
+    return;
+  }
+  if (g.drawn) {
+    var b = bestPlace(g, seat, g.drawn.v, lvl);
+    var canDump = p.grid.some(function (c) { return !c.up && !c.gone; });
+    var dumpEndsIt = lvl.endgame && hiddenCount(p) === 1 && !safeToGoOut(g, seat);
+    if (g.drawn.src === 'discard' || !canDump || dumpEndsIt || b.gain >= lvl.keep) {
+      MOVES.place(g, seat, b.idx);
+    } else {
+      MOVES.dump(g, seat);
+    }
+    return;
+  }
+  if (g.mustFlip) {
+    var cand = [];
+    for (var i = 0; i < 12; i++) if (!p.grid[i].up && !p.grid[i].gone) cand.push(i);
+    if (!cand.length) return;
+    /* keep columns that already show a matching pair free for a targeted swap */
+    var pick = cand[0], bestS = 9;
+    for (var j = 0; j < cand.length; j++) {
+      var col = colOf(cand[j]), up = [];
+      for (var k = 0; k < col.length; k++) {
+        if (col[k] === cand[j]) continue;
+        up.push(p.grid[col[k]]);
+      }
+      var pairOpen = up.length === 2 && !up[0].gone && !up[1].gone && up[0].up && up[1].up && up[0].v === up[1].v;
+      var sc = pairOpen ? 1 : 0;
+      if (sc < bestS) { bestS = sc; pick = cand[j]; }
+    }
+    MOVES.flipOne(g, seat, pick);
+  }
 }
 
 /* ============================== moves ============================== */
@@ -331,10 +458,10 @@ var MOVES = {
     var allReady = g.players.every(function (q) { return upCount(q) >= 2; });
     if (allReady) {
       beginPlay(g);
-      if (g.mode === 'local') g.handoff = { from: seat, next: g.turn, opening: true };
-    } else if (g.mode === 'local') {
+      setHandoff(g, seat, g.turn, { opening: true });
+    } else {
       var nxt = g.players.findIndex(function (q) { return upCount(q) < 2; });
-      g.handoff = { from: seat, next: nxt, flip: true };
+      if (nxt >= 0) setHandoff(g, seat, nxt, { flip: true });
     }
   },
 
@@ -438,6 +565,8 @@ var app = {
   msg: '',
   busy: false,
   endStage: 'closing',
+  bots: [],
+  viewSeat: -1,
   lostAt: 0,
   myLate: {},
   copied: false,
@@ -501,8 +630,10 @@ function mySeat() {
   if (!g || g.phase === 'lobby') return -1;
   if (app.mode === 'local') {
     if (g.handoff) return g.handoff.from;
-    if (g.phase === 'flip') return g.players.findIndex(function (p) { return upCount(p) < 2; });
-    return g.turn;
+    if (g.phase === 'flip') return g.players.findIndex(function (p) { return !p.bot && upCount(p) < 2; });
+    if (!g.players[g.turn].bot) { app.viewSeat = g.turn; return g.turn; }
+    if (app.viewSeat >= 0 && g.players[app.viewSeat] && !g.players[app.viewSeat].bot) return app.viewSeat;
+    return g.players.findIndex(function (p) { return !p.bot; });
   }
   return seatOf(app.myId);
 }
@@ -729,6 +860,7 @@ function viewHome() {
     '<div style="height:13px"></div>' +
     '<button class="btn" data-act="goOnline">Start a new game</button>' +
     '<button class="btn quiet" data-act="goJoin">Join with a code</button>' +
+    '<button class="btn quiet" data-act="goSolo">Play against the computer</button>' +
     '<button class="btn ghost" data-act="goLocal">Play on one device</button>' +
     (function () {
       var ss = loadSession();
@@ -779,12 +911,28 @@ function viewLocal() {
   var f = app.localNames.map(function (n, i) {
     return '<input class="fld" data-field="local" data-i="' + i + '" maxlength="12" placeholder="Player ' + (i + 1) + '" value="' + esc(n) + '">';
   }).join('');
+  var b = app.bots.map(function (lv, i) {
+    return '<div class="botrow"><span class="pipsm">' + esc(BOT_NAMES[i].charAt(0)) + '</span>' +
+      '<span class="bn">' + esc(BOT_NAMES[i]) + '</span>' +
+      '<button class="lvl" data-act="botLvl" data-i="' + i + '">' + esc(LEVELS[lv].label) + '</button></div>';
+  }).join('');
+  var total = app.localNames.length + app.bots.length;
   return '<div class="hd"><button class="back" data-act="home">&larr;</button><h1>One device</h1></div>' +
-    '<p style="color:var(--dim);font-size:14px;margin-top:0">Everyone plays on this screen. After each move the game pauses, shows what just happened, and only switches boards when the next person taps to take over.</p>' +
-    f + '<div class="row" style="margin:4px 0 16px">' +
-    (app.localNames.length < 8 ? '<button class="btn quiet sm" data-act="addLocal">Add a player</button>' : '') +
-    (app.localNames.length > 2 ? '<button class="btn ghost sm" data-act="delLocal">Remove</button>' : '') +
-    '</div><button class="btn" data-act="startLocal">Deal</button>';
+    '<p style="color:var(--dim);font-size:14px;margin-top:0">Add people, computer players, or a mix. With two or more people the game pauses between turns so you can hand the phone along.</p>' +
+    '<div class="lbl">People</div>' + f +
+    '<div class="row" style="margin:4px 0 16px">' +
+    (app.localNames.length < 8 ? '<button class="btn quiet sm" data-act="addLocal">Add a person</button>' : '') +
+    (app.localNames.length > 1 ? '<button class="btn ghost sm" data-act="delLocal">Remove</button>' : '') +
+    '</div>' +
+    '<div class="lbl">Computer players</div>' +
+    (b || '<p style="color:var(--rule);font-size:13px;margin:0 0 8px">None yet.</p>') +
+    '<div class="row" style="margin:10px 0 18px">' +
+    (total < 8 ? '<button class="btn quiet sm" data-act="addBot">Add a computer</button>' : '') +
+    (app.bots.length ? '<button class="btn ghost sm" data-act="delBot">Remove</button>' : '') +
+    '</div>' +
+    '<button class="btn" data-act="startLocal"' + (total < 2 ? ' disabled' : '') + '>' +
+    (total < 2 ? 'Add one more player' : 'Deal for ' + total) + '</button>' +
+    '<p class="fine">Tap a computer player\u2019s level to change it. Easy plays loosely; Hard counts the odds and avoids ending a round it would lose.</p>';
 }
 function viewNet() {
   return '<div class="hd"><button class="back" data-act="home">&larr;</button><h1>Network</h1></div>' +
@@ -986,11 +1134,12 @@ function viewGame() {
       '<div class="hint">' + hint + '</div></div>';
   } else {
     var head, sub, mine, whoP;
+    var solo = g.mode === 'local' && g.players.filter(function (x) { return !x.bot; }).length === 1;
     if (g.phase === 'flip') {
       mine = flipping;
       whoP = flipping ? me : null;
       if (flipping) {
-        head = g.mode === 'local' ? esc(me.name) + ', flip two' : 'Your two cards';
+        head = (g.mode === 'local' && !solo) ? esc(me.name) + ', flip two' : 'Flip any two';
         sub = 'Tap any two cards to turn them face up';
       } else {
         head = 'Waiting on the others';
@@ -999,7 +1148,7 @@ function viewGame() {
     } else {
       mine = myTurn;
       whoP = g.players[g.turn];
-      if (g.mode === 'local') head = esc(whoP.name) + '\u2019s turn';
+      if (g.mode === 'local') head = (solo && !whoP.bot) ? 'Your turn' : esc(whoP.name) + '\u2019s turn';
       else head = myTurn ? 'Your turn' : esc(active.name) + '\u2019s turn';
       if (myTurn) {
         if (g.drawn) sub = g.drawn.src === 'deck' ? 'Swap it in, or drop it on the discard' : 'Swap it into your grid';
@@ -1100,6 +1249,22 @@ function viewGame() {
 
 /* ============================== render + events ============================== */
 var rootEl;
+var botTimer = null;
+function tickBot() {
+  if (botTimer || app.mode !== 'local') return;
+  var g = app.G;
+  if (!g || g.phase !== 'play' || g.handoff) return;
+  var p = g.players[g.turn];
+  if (!p || !p.bot) return;
+  botTimer = setTimeout(function () {
+    botTimer = null;
+    var cur = app.G;
+    if (cur && app.mode === 'local' && cur.phase === 'play' && !cur.handoff && cur.players[cur.turn].bot) {
+      botStep(cur);
+      render();
+    }
+  }, 700 + Math.random() * 500);
+}
 function render() {
   var html;
   try {
@@ -1117,6 +1282,7 @@ function render() {
       '<div style="height:14px"></div><button class="btn" data-act="home">Back to the start</button>';
   }
   rootEl.innerHTML = html;
+  tickBot();
 }
 
 function cleanup() {
@@ -1177,15 +1343,33 @@ var ACTS = {
       .catch(function (e) { app.busy = false; app.msg = e.message; render(); });
   },
 
-  addLocal: function () { if (app.localNames.length < 8) app.localNames.push(''); },
-  delLocal: function () { if (app.localNames.length > 2) app.localNames.pop(); },
+  addLocal: function () { if (app.localNames.length + app.bots.length < 8) app.localNames.push(''); },
+  addBot: function () { if (app.localNames.length + app.bots.length < 8) app.bots.push('normal'); },
+  delBot: function () { app.bots.pop(); },
+  botLvl: function (i) {
+    var order = ['easy', 'normal', 'hard'];
+    app.bots[i] = order[(order.indexOf(app.bots[i]) + 1) % 3];
+  },
+  goSolo: function () {
+    app.msg = '';
+    app.localNames = [app.name.trim() || 'You'];
+    app.bots = ['normal'];
+    app.screen = 'local';
+  },
+  delLocal: function () { if (app.localNames.length > 1) app.localNames.pop(); },
   startLocal: function () {
-    var names = app.localNames.map(function (n, i) { return n.trim() || 'Player ' + (i + 1); });
-    app.mode = 'local';
+    var ns = app.localNames.map(function (n, i) { return n.trim() || 'Player ' + (i + 1); });
+    var ps = ns.map(function (n, i) { return newPlayer('L' + i, n); });
+    app.bots.forEach(function (lv, i) {
+      var bp = newPlayer('B' + i, BOT_NAMES[i]);
+      bp.bot = true; bp.lvl = lv;
+      ps.push(bp);
+    });
+    if (ps.length < 2) return;
+    app.mode = 'local'; app.viewSeat = -1;
     app.G = {
       mode: 'local', code: 'LOCAL', round: 1, phase: 'lobby',
-      players: names.map(function (n, i) { return newPlayer('L' + i, n); }),
-      deck: [], discard: [], turn: 0, drawn: null, mustFlip: false,
+      players: ps, deck: [], discard: [], turn: 0, drawn: null, mustFlip: false,
       ender: null, handoff: null, log: [], ts: Date.now()
     };
     dealRound(app.G);
