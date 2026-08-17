@@ -160,6 +160,11 @@ p{line-height:1.6}
 .mini .card.live{box-shadow:none}
 
 .revrow{margin-bottom:18px}
+.swap{display:flex;align-items:center;justify-content:center;gap:14px;margin:14px 0 4px}
+.swap .leg{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--dim);
+  margin-top:6px;text-align:center}
+.swap .card{width:54px;height:77px;font-size:24px;border-radius:7px}
+.swap .ar{font-size:18px;color:var(--rule);margin-bottom:16px}
 .mid .board{grid-template-columns:repeat(4,46px);gap:5px}
 .mid .card{width:46px;height:65px;font-size:20px;border-radius:6px}
 .mid .card.back span{font-size:15px}
@@ -202,7 +207,7 @@ details ol{color:var(--dim);font-size:13px;line-height:1.65;padding-left:18px;ma
 <script>
 "use strict";
 
-var BUILD = "build 8 \u00b7 16 Aug";
+var BUILD = "build 9 \u00b7 16 Aug";
 
 /* ===================== tiny storage (safe if blocked) ===================== */
 var mem = {};
@@ -285,7 +290,9 @@ function beginPlay(g) {
   note(g, g.players[idx].name + ' showed the highest pair and starts.');
 }
 function scoreRound(g) {
-  g.players.forEach(function (p) { p.grid.forEach(function (c) { c.up = true; }); });
+  g.players.forEach(function (p) {
+    p.grid.forEach(function (c) { if (!c.up && !c.gone) c.late = true; c.up = true; });
+  });
   g.players.forEach(function (p) { while (clearColumns(p, g.discard)) { /* cascade */ } });
   var scores = g.players.map(rawScore);
   var e = g.ender;
@@ -362,6 +369,7 @@ var MOVES = {
     if (!g.drawn || p.grid[i].gone) return;
     var out = p.grid[i];
     var was = out.up ? 'a ' + out.v : 'a face-down card';
+    g.lastMove = { kind: 'swap', seat: seat, name: p.name, took: g.drawn.v, threw: out.v, wasUp: out.up };
     note(g, p.name + ' put a ' + g.drawn.v + ' in place of ' + was + '.');
     g.discard.push(out.v);
     p.grid[i] = { v: g.drawn.v, up: true, gone: false };
@@ -376,6 +384,7 @@ var MOVES = {
     if (!g.mustFlip || p.grid[i].up || p.grid[i].gone) return;
     p.grid[i].up = true;
     g.mustFlip = false;
+    g.lastMove = { kind: 'flip', seat: seat, name: p.name, flipped: p.grid[i].v };
     note(g, p.name + ' turned over a ' + p.grid[i].v + '.');
     if (clearColumns(p, g.discard)) note(g, p.name + ' cleared a whole column.');
     endTurn(g);
@@ -428,7 +437,8 @@ var app = {
   stage: '',
   msg: '',
   busy: false,
-  showScores: false,
+  endStage: 'closing',
+  myLate: {},
   copied: false,
   tallyKey: null,
   sawRelay: false
@@ -678,9 +688,13 @@ function cardHTML(c, i, live) {
   if (!c.up) return '<button class="card back' + hot + '"' + attrs + '><span>&#9670;</span></button>';
   return '<button class="card up ' + cardCls(c.v) + hot + '"' + attrs + '>' + c.v + '</button>';
 }
-function boardHTML(grid, liveFn) {
+function boardHTML(grid, liveFn, hideFn) {
   var out = '';
-  for (var i = 0; i < grid.length; i++) out += cardHTML(grid[i], i, liveFn ? liveFn(i) : false);
+  for (var i = 0; i < grid.length; i++) {
+    var c = grid[i];
+    if (hideFn && !c.gone && hideFn(i)) c = { v: c.v, up: false, gone: false };
+    out += cardHTML(c, i, liveFn ? liveFn(i) : false);
+  }
   return '<div class="board">' + out + '</div>';
 }
 function seatHeadHTML(p, hot, you) {
@@ -819,7 +833,53 @@ function syncTallyView() {
   if (!g) return;
   var isTally = g.phase === 'tally' || g.phase === 'over';
   var key = isTally ? g.round + ':' + g.phase : null;
-  if (key !== app.tallyKey) { app.tallyKey = key; app.showScores = false; }
+  if (key !== app.tallyKey) { app.tallyKey = key; app.endStage = 'closing'; app.myLate = {}; }
+}
+function viewClosing() {
+  var g = app.G;
+  var seat = (app.mode === 'local') ? g.turn : seatOf(app.myId);
+  if (seat < 0 || !g.players[seat]) { app.endStage = 'reveal'; return viewReveal(); }
+  var p = g.players[seat];
+  var pending = [];
+  p.grid.forEach(function (c, i) { if (c.late && !c.gone && !app.myLate[i]) pending.push(i); });
+  var lm = g.lastMove;
+  var mineLast = lm && lm.seat === seat;
+
+  var moveHTML = '';
+  if (mineLast && lm.kind === 'swap') {
+    moveHTML = '<div class="swap">' +
+      '<div><button class="card up ' + cardCls(lm.took) + '" disabled>' + lm.took + '</button>' +
+      '<div class="leg">KEPT</div></div>' +
+      '<div class="ar">&rarr;</div>' +
+      '<div><button class="card up ' + cardCls(lm.threw) + '" disabled>' + lm.threw + '</button>' +
+      '<div class="leg">THREW AWAY</div></div></div>';
+  } else if (mineLast && lm.kind === 'flip') {
+    moveHTML = '<div class="swap"><div>' +
+      '<button class="card up ' + cardCls(lm.flipped) + '" disabled>' + lm.flipped + '</button>' +
+      '<div class="leg">TURNED OVER</div></div></div>';
+  }
+
+  var head = mineLast
+    ? (app.mode === 'local' ? esc(p.name) + '\u2019s last move' : 'Your last move')
+    : 'Round over';
+  var note2 = pending.length
+    ? 'Tap your face-down cards to turn them over, or use the button below.'
+    : 'Nothing left to turn over.';
+
+  return topHTML() +
+    '<div style="text-align:center;padding:18px 0 4px">' +
+    '<div class="lbl">' + (g.phase === 'over' ? 'Last round' : 'Round ' + g.round) + '</div>' +
+    '<div class="win">' + head + '</div></div>' +
+    moveHTML +
+    '<p style="color:var(--dim);font-size:12.5px;text-align:center;margin:10px 0 14px">' + note2 + '</p>' +
+    '<div class="seat">' + seatHeadHTML(p, false, app.mode === 'online') +
+    boardHTML(p.grid,
+      function (i) { return p.grid[i].late && !p.grid[i].gone && app.myLate[i] !== true; },
+      function (i) { return p.grid[i].late && !app.myLate[i]; }) + '</div>' +
+    '<div style="height:16px"></div>' +
+    (pending.length
+      ? '<button class="btn" data-act="flipAll">Turn over my last ' + pending.length + ' card' + (pending.length === 1 ? '' : 's') + '</button>'
+      : '<button class="btn" data-act="toReveal">See everyone\u2019s cards</button>');
 }
 function viewReveal() {
   var g = app.G;
@@ -870,7 +930,9 @@ function viewGame() {
   if (g.phase === 'lobby') return viewLobby();
   if (g.phase === 'tally' || g.phase === 'over') {
     syncTallyView();
-    return app.showScores ? viewTally() : viewReveal();
+    if (app.endStage === 'closing') return viewClosing();
+    if (app.endStage === 'reveal') return viewReveal();
+    return viewTally();
   }
 
   var seat = mySeat();
@@ -1047,7 +1109,14 @@ var ACTS = {
   goJoin: function () { app.msg = ''; app.screen = 'join'; },
   goLocal: function () { app.msg = ''; app.screen = 'local'; },
   goNet: function () { app.msg = ''; app.screen = 'net'; },
-  showScores: function () { app.showScores = true; },
+  showScores: function () { app.endStage = 'scores'; },
+  toReveal: function () { app.endStage = 'reveal'; },
+  flipAll: function () {
+    var g = app.G;
+    var seat = (app.mode === 'local') ? g.turn : seatOf(app.myId);
+    if (seat < 0) { app.endStage = 'reveal'; return; }
+    g.players[seat].grid.forEach(function (c, i) { if (c.late && !c.gone) app.myLate[i] = true; });
+  },
   copyCode: function () {
     var c = app.G && app.G.code;
     if (!c) return;
@@ -1065,7 +1134,7 @@ var ACTS = {
     loadMqtt().then(function () { openRoom(ss.code, 'resume'); })
       .catch(function (e) { app.busy = false; app.msg = e.message; render(); });
   },
-  hideScores: function () { app.showScores = false; },
+  hideScores: function () { app.endStage = 'reveal'; },
   saveNet: function () {
     var t = app.brokerRaw.trim();
     if (t && t.indexOf('ws://') !== 0 && t.indexOf('wss://') !== 0) { app.msg = 'A broker address must start with wss:// or ws://'; return; }
@@ -1113,7 +1182,9 @@ var ACTS = {
   dump: function () { act('dump'); },
   cell: function (i) {
     var g = app.G;
-    if (!g || g.handoff) return;
+    if (!g) return;
+    if (g.phase === 'tally' || g.phase === 'over') { app.myLate[i] = true; return; }
+    if (g.handoff) return;
     if (g.phase === 'flip') return act('flipStart', i);
     if (g.drawn) return act('place', i);
     if (g.mustFlip) return act('flipOne', i);
